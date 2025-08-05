@@ -1,0 +1,20 @@
+{
+    "frame": {
+      "name": "Payments",
+      "version": "1",
+      "iconUrl": "https://https://payments-miniapp.vercel.app/icon.png",
+      "homeUrl": "https://https://payments-miniapp.vercel.app",
+      "imageUrl": "https://https://payments-miniapp.vercel.app/image.png",
+      "splashImageUrl": "https://https://payments-miniapp.vercel.app/splash.png",
+      "splashBackgroundColor": "#f7f7f7",
+      "webhookUrl": "https://https://payments-miniapp.vercel.app/api/webhook",
+      "subtitle": "Pay / receive funds on any chain",
+      "description": "Experience the payments ease with Gasyard fi",
+      "primaryCategory": "finance"
+    },
+    "accountAssociation": {
+      "header": "eyJmaWQiOjg4NDgyMywidHlwZSI6ImF1dGgiLCJrZXkiOiIweGM5QjA2RTgxMjJmMGM1MWVCNjlFQTcxM0UyN2RBOTIyQ0E3YzQ1OEUifQ",
+      "payload": "eyJkb21haW4iOiJodHRwczovL3BheW1lbnRzLW1pbmlhcHAudmVyY2VsLmFwcCJ9",
+      "signature": "n7nKeE1Eta4mUdT+8gPuaI8KOhWl9wbMgDrFaVSC2wwXFFwEm13KuAu3p90aBSJVOw+Oe5v0JonFlSrdAIMP6Rs="
+    }
+  }
