@@ -1,4 +1,9 @@
 {
+    "accountAssociation": {
+        "header": "eyJmaWQiOjg4NDgyMywidHlwZSI6ImF1dGgiLCJrZXkiOiIweGM5QjA2RTgxMjJmMGM1MWVCNjlFQTcxM0UyN2RBOTIyQ0E3YzQ1OEUifQ",
+        "payload": "eyJkb21haW4iOiJwYXltZW50cy1taW5pYXBwLnZlcmNlbC5hcHAifQ",
+        "signature": "lmcbWnaef8cK3lcwKs3F6bxtQbdXjsXEvZRNMAKPK2k0GKCBXF/Fdg9i1qcLGI7URkzY+mHUPxY6OR+arsnHsRs="
+    },
     "frame": {
       "name": "Payments",
       "version": "1",
@@ -11,10 +16,5 @@
       "subtitle": "Pay / receive funds on any chain",
       "description": "Experience the payments ease with Gasyard fi",
       "primaryCategory": "finance"
-    },
-    "accountAssociation": {
-        "header": "eyJmaWQiOjg4NDgyMywidHlwZSI6ImF1dGgiLCJrZXkiOiIweGM5QjA2RTgxMjJmMGM1MWVCNjlFQTcxM0UyN2RBOTIyQ0E3YzQ1OEUifQ",
-        "payload": "eyJkb21haW4iOiJwYXltZW50cy1taW5pYXBwLnZlcmNlbC5hcHAifQ",
-        "signature": "lmcbWnaef8cK3lcwKs3F6bxtQbdXjsXEvZRNMAKPK2k0GKCBXF/Fdg9i1qcLGI7URkzY+mHUPxY6OR+arsnHsRs="
     }
   }
