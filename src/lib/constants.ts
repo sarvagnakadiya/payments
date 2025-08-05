@@ -1,4 +1,4 @@
-import { type AccountAssociation } from '@farcaster/miniapp-core/src/manifest';
+import { type AccountAssociation } from "@farcaster/miniapp-core/src/manifest";
 
 /**
  * Application constants and configuration values.
@@ -22,25 +22,26 @@ export const APP_URL: string = process.env.NEXT_PUBLIC_URL!;
  * The name of the mini app as displayed to users.
  * Used in titles, headers, and app store listings.
  */
-export const APP_NAME = 'payments-miniapp';
+export const APP_NAME = "payments-miniapp";
 
 /**
  * A brief description of the mini app's functionality.
  * Used in app store listings and metadata.
  */
-export const APP_DESCRIPTION = 'A farcaster miniapp to pay/receive funds powered by gasyard';
+export const APP_DESCRIPTION =
+  "A farcaster miniapp to pay/receive funds powered by gasyard";
 
 /**
  * The primary category for the mini app.
  * Used for app store categorization and discovery.
  */
-export const APP_PRIMARY_CATEGORY = 'finance';
+export const APP_PRIMARY_CATEGORY = "finance";
 
 /**
  * Tags associated with the mini app.
  * Used for search and discovery in app stores.
  */
-export const APP_TAGS = ['finance', 'payments', 'gasyard'];
+export const APP_TAGS = ["finance", "payments", "gasyard"];
 
 // --- Asset URLs ---
 /**
@@ -65,7 +66,7 @@ export const APP_SPLASH_URL: string = `${APP_URL}/splash.png`;
  * Background color for the splash screen.
  * Used as fallback when splash image is loading.
  */
-export const APP_SPLASH_BACKGROUND_COLOR: string = '#f7f7f7';
+export const APP_SPLASH_BACKGROUND_COLOR: string = "#f7f7f7";
 
 /**
  * Account association for the mini app.
@@ -80,7 +81,46 @@ export const APP_ACCOUNT_ASSOCIATION: AccountAssociation | undefined =
  * Text displayed on the main action button.
  * Used for the primary call-to-action in the mini app.
  */
-export const APP_BUTTON_TEXT = 'open';
+export const APP_BUTTON_TEXT = "open";
+
+// --- Token Addresses ---
+/**
+ * USDC token addresses for supported chains.
+ * Used for balance fetching and token transfers.
+ */
+export const USDC_ADDRESSES = {
+  // Base
+  8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`,
+  // Optimism
+  10: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" as `0x${string}`,
+  // Mainnet
+  1: "0xA0b86a33E6441b8C4C8C0C4C8C0C4C8C0C4C8C0C" as `0x${string}`,
+  // Degen
+  666666666: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff" as `0x${string}`,
+  // Unichain
+  111111111: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff" as `0x${string}`,
+  // Celo
+  42220: "0x765DE816845861e75A25fCA122bb6898B8B1282a" as `0x${string}`,
+} as const;
+
+/**
+ * USDT token addresses for supported chains.
+ * Used for balance fetching and token transfers.
+ */
+export const USDT_ADDRESSES = {
+  // Base
+  8453: "0xf1e92B13697CCfe1d0E652b970859f038132b8f3" as `0x${string}`,
+  // Optimism
+  10: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58" as `0x${string}`,
+  // Mainnet
+  1: "0xdAC17F958D2ee523a2206206994597C13D831ec7" as `0x${string}`,
+  // Degen
+  666666666: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff" as `0x${string}`,
+  // Unichain
+  111111111: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff" as `0x${string}`,
+  // Celo
+  42220: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e" as `0x${string}`,
+} as const;
 
 // --- Integration Configuration ---
 /**
@@ -127,16 +167,16 @@ export const APP_REQUIRED_CHAINS: string[] = [];
 
 // PLEASE DO NOT UPDATE THIS
 export const SIGNED_KEY_REQUEST_VALIDATOR_EIP_712_DOMAIN = {
-  name: 'Farcaster SignedKeyRequestValidator',
-  version: '1',
+  name: "Farcaster SignedKeyRequestValidator",
+  version: "1",
   chainId: 10,
   verifyingContract:
-    '0x00000000fc700472606ed4fa22623acf62c60553' as `0x${string}`,
+    "0x00000000fc700472606ed4fa22623acf62c60553" as `0x${string}`,
 };
 
 // PLEASE DO NOT UPDATE THIS
 export const SIGNED_KEY_REQUEST_TYPE = [
-  { name: 'requestFid', type: 'uint256' },
-  { name: 'key', type: 'bytes' },
-  { name: 'deadline', type: 'uint256' },
+  { name: "requestFid", type: "uint256" },
+  { name: "key", type: "bytes" },
+  { name: "deadline", type: "uint256" },
 ];

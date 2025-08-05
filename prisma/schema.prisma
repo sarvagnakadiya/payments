@@ -1,0 +1,84 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UsernameSource {
+  FARCASTER
+  GASYARD
+}
+
+enum RequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum Chain {
+  ETHEREUM
+  BASE
+  BNB
+  ARBITRUM
+  HYPERLIQUID
+  MOVEMENT
+  SOLANA
+  SEI
+  POLYGON
+}
+
+enum Token {
+  ETH
+  USDC
+  BSC_USD
+  USDT
+  BNB
+  MOVE
+  POL
+  SEI
+}
+
+model User {
+  id               String         @id @default(cuid())
+  fid              String?        @unique
+  username         String         @unique
+  usernameSource   UsernameSource
+  createdAt        DateTime       @default(now())
+  preferredChain   Chain
+  preferredToken   Token
+  preferredAddress String
+
+  requestsSent     FundRequest[] @relation("RequestsSent")
+  requestsReceived FundRequest[] @relation("RequestsReceived")
+}
+
+model FundRequest {
+  id              String        @id @default(cuid())
+  senderId        String
+  receiverId      String
+  amount          Decimal
+  // override/ defaults if needed
+  overrideChain   Chain?
+  overrideToken   Token?
+  overrideAddress String?
+  note            String?
+  createdAt       DateTime      @default(now())
+  expiresAt       DateTime?
+  status          RequestStatus @default(PENDING)
+
+  sender   User @relation("RequestsSent", fields: [senderId], references: [id])
+  receiver User @relation("RequestsReceived", fields: [receiverId], references: [id])
+
+  @@index([senderId])
+  @@index([receiverId])
+}
