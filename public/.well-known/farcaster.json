@@ -13,8 +13,8 @@
       "primaryCategory": "finance"
     },
     "accountAssociation": {
-      "header": "eyJmaWQiOjg4NDgyMywidHlwZSI6ImF1dGgiLCJrZXkiOiIweGM5QjA2RTgxMjJmMGM1MWVCNjlFQTcxM0UyN2RBOTIyQ0E3YzQ1OEUifQ",
-      "payload": "eyJkb21haW4iOiJodHRwczovL3BheW1lbnRzLW1pbmlhcHAudmVyY2VsLmFwcCJ9",
-      "signature": "n7nKeE1Eta4mUdT+8gPuaI8KOhWl9wbMgDrFaVSC2wwXFFwEm13KuAu3p90aBSJVOw+Oe5v0JonFlSrdAIMP6Rs="
+        "header": "eyJmaWQiOjg4NDgyMywidHlwZSI6ImF1dGgiLCJrZXkiOiIweGM5QjA2RTgxMjJmMGM1MWVCNjlFQTcxM0UyN2RBOTIyQ0E3YzQ1OEUifQ",
+        "payload": "eyJkb21haW4iOiJwYXltZW50cy1taW5pYXBwLnZlcmNlbC5hcHAifQ",
+        "signature": "lmcbWnaef8cK3lcwKs3F6bxtQbdXjsXEvZRNMAKPK2k0GKCBXF/Fdg9i1qcLGI7URkzY+mHUPxY6OR+arsnHsRs="
     }
   }
