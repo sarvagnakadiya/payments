@@ -62,12 +62,19 @@ export default function App(
   const [selectedToken, setSelectedToken] = useState("USDC");
 
   // --- Hooks ---
-  const { isSDKLoaded, context } = useMiniApp();
+  const { isSDKLoaded, context, added, actions } = useMiniApp();
 
   console.log("context", context);
 
   // --- Neynar user hook ---
   const { user: neynarUser } = useNeynarUser(context || undefined);
+
+  // Auto-add mini app if not added
+  useEffect(() => {
+    if (context && !added) {
+      actions.addMiniApp();
+    }
+  }, [context, actions.addMiniApp, added]);
 
   // --- Wallet hooks ---
   const { address: evmAddress, isConnected: isEvmConnected } = useAccount();
