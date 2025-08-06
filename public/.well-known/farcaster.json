@@ -12,7 +12,7 @@
       "imageUrl": "https://https://payments-miniapp.vercel.app/image.png",
       "splashImageUrl": "https://https://payments-miniapp.vercel.app/splash.png",
       "splashBackgroundColor": "#f7f7f7",
-      "webhookUrl": "https://https://payments-miniapp.vercel.app/api/webhook",
+      "webhookUrl": "https://api.neynar.com/f/app/2db1207f-4ad5-472b-9836-87049e20c578/event",
       "subtitle": "Pay / receive funds on any chain",
       "description": "Experience the payments ease with Gasyard fi",
       "primaryCategory": "finance"

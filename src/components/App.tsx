@@ -20,7 +20,6 @@ import WalletConfigurePopup from "./ui/WalletConfigurePopup";
 import {
   BoxArrowDownIcon,
   CoinsIcon,
-  PaperPlaneTiltIcon,
   PlusCircleIcon,
 } from "@phosphor-icons/react";
 
