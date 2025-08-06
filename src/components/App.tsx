@@ -64,6 +64,9 @@ export default function App(
   const { isSDKLoaded, context, added, actions } = useMiniApp();
 
   console.log("context", context);
+  console.log("isSDKLoaded", isSDKLoaded);
+  console.log("added", added);
+  console.log("actions", actions);
 
   // --- Neynar user hook ---
   const { user: neynarUser } = useNeynarUser(context || undefined);
@@ -71,7 +74,23 @@ export default function App(
   // Auto-add mini app if not added
   useEffect(() => {
     if (context && !added) {
-      actions.addMiniApp();
+      console.log("Attempting to add mini app...");
+      console.log("Context:", context);
+      console.log("Added status:", added);
+
+      // Add a small delay to ensure everything is loaded
+      const timer = setTimeout(() => {
+        actions
+          .addMiniApp()
+          .then(() => {
+            console.log("addMiniApp() completed successfully");
+          })
+          .catch((error) => {
+            console.error("addMiniApp() failed:", error);
+          });
+      }, 1000);
+
+      return () => clearTimeout(timer);
     }
   }, [context, actions.addMiniApp, added]);
 
@@ -165,36 +184,58 @@ export default function App(
         </div>
 
         {/* Wallet selection on right */}
-        <button
-          onClick={() => setShowWalletConfigurePopup(true)}
-          className="flex items-center space-x-2 bg-white px-3 py-2 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors"
-        >
-          <div className="relative flex items-center">
-            <div className="w-4 h-4 bg-green-500 rounded-full z-10"></div>
-            <div className="w-4 h-4 bg-blue-500 rounded-full -ml-3 z-20"></div>
-            <div className="w-4 h-4 bg-purple-500 rounded-full -ml-3 z-30"></div>
-          </div>
-          <span className="text-sm font-medium">Wallets</span>
-          <svg
-            className="w-4 h-4 text-gray-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+        <div className="flex items-center space-x-2">
+          {/* Add Mini App Button - for debugging */}
+          {!added && (
+            <button
+              onClick={() => {
+                console.log("Manual addMiniApp triggered");
+                actions
+                  .addMiniApp()
+                  .then(() => {
+                    console.log("Manual addMiniApp completed");
+                  })
+                  .catch((error) => {
+                    console.error("Manual addMiniApp failed:", error);
+                  });
+              }}
+              className="bg-blue-500 text-white px-3 py-2 rounded-full text-sm font-medium hover:bg-blue-600 transition-colors"
+            >
+              Add App
+            </button>
+          )}
+
+          <button
+            onClick={() => setShowWalletConfigurePopup(true)}
+            className="flex items-center space-x-2 bg-white px-3 py-2 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c1.756-.426 1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-            />
-          </svg>
-        </button>
+            <div className="relative flex items-center">
+              <div className="w-4 h-4 bg-green-500 rounded-full z-10"></div>
+              <div className="w-4 h-4 bg-blue-500 rounded-full -ml-3 z-20"></div>
+              <div className="w-4 h-4 bg-purple-500 rounded-full -ml-3 z-30"></div>
+            </div>
+            <span className="text-sm font-medium">Wallets</span>
+            <svg
+              className="w-4 h-4 text-gray-500"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c1.756-.426 1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Main Content Section */}
