@@ -13,8 +13,8 @@
       "splashImageUrl": "https://https://payments-miniapp.vercel.app/splash.png",
       "splashBackgroundColor": "#f7f7f7",
       "webhookUrl": "https://api.neynar.com/f/app/2db1207f-4ad5-472b-9836-87049e20c578/event",
-      "subtitle": "Pay and receive funds on any chain",
-      "description": "Payments smooth payments",
+      "subtitle": "gasyard payments",
+      "description": "pay with ease",
       "primaryCategory": "finance"
     }
   }
