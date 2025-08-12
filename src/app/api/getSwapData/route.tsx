@@ -368,11 +368,6 @@ async function handleSimplifiedBridgeRequest(data: {
     );
   }
 
-  console.log(
-    "Initializing Gasyard SDK with API key:",
-    apiKey.substring(0, 8) + "..."
-  );
-
   const sdk = new GasyardSDK({
     apiKey,
   });

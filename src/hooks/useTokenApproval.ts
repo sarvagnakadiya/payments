@@ -19,6 +19,7 @@ interface UseTokenApprovalReturn {
   executeApproval: () => Promise<void>;
   isApproving: boolean;
   approvalError: string | null;
+  setApprovalComplete: () => void;
 }
 
 export function useTokenApproval(
@@ -168,6 +169,11 @@ export function useTokenApproval(
     setApprovalError(null);
   };
 
+  const setApprovalComplete = () => {
+    setNeedsApproval(false);
+    setIsApproving(false);
+  };
+
   // Check approval when amount, token, address, or chain changes
   useEffect(() => {
     if (
@@ -209,7 +215,9 @@ export function useTokenApproval(
       );
       console.log("Transaction hash:", transactionHash);
       setIsApproving(false);
-      // Immediately re-check approval status
+      // Set approval as no longer needed immediately
+      setNeedsApproval(false);
+      // Then re-check to confirm
       checkApproval();
     }
   }, [isTransactionConfirmed, isApproving, checkApproval, transactionHash]);
@@ -224,5 +232,6 @@ export function useTokenApproval(
     executeApproval,
     isApproving,
     approvalError,
+    setApprovalComplete,
   };
 }

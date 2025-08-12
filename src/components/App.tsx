@@ -13,12 +13,12 @@ import {
   usePublicClient,
 } from "wagmi";
 import { useWallet as useSolanaWallet } from "@solana/wallet-adapter-react";
-import { USE_WALLET } from "~/lib/constants";
 import { getTokenAddress, checkTokenApprovalNeeded } from "~/lib/tokenUtils";
 import { getTokenInfo, getGatewayAddress } from "~/lib/tokens";
 import { encodeFunctionData } from "viem";
 import { useNeynarUser } from "../hooks/useNeynarUser";
 import { useFundRequests } from "../hooks/useFundRequests";
+import { sdk } from "@farcaster/miniapp-sdk";
 
 import ActionSheet from "./ui/ActionSheet";
 import PayPopup from "./ui/PayPopup";
@@ -67,6 +67,7 @@ export default function App(
   const [amount, setAmount] = useState("0");
   const [selectedToken, setSelectedToken] = useState("USDC");
   const [currentUserId, setCurrentUserId] = useState<string | undefined>();
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   // Payment flow state
   const [paymentStep, setPaymentStep] = useState<"approval" | "payment" | null>(
@@ -116,12 +117,15 @@ export default function App(
 
   // We'll manage approval state manually for fund requests to avoid confusion with PayPopup usage
 
-  // Store user data when Farcaster context is available
+  // Store user data and fetch all required data when Farcaster context is available
   useEffect(() => {
-    if (context?.user?.fid && context?.user?.username) {
-      const storeUserData = async () => {
+    if (context?.user?.fid) {
+      const initializeApp = async () => {
         try {
-          const response = await fetch("/api/users", {
+          console.log("Initializing app with data fetching...");
+
+          // Step 1: Fetch user data from /api/users
+          const userResponse = await fetch("/api/users", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -133,24 +137,43 @@ export default function App(
             }),
           });
 
-          if (response.ok) {
-            const result = await response.json();
+          if (userResponse.ok) {
+            const result = await userResponse.json();
             console.log("User data stored successfully:", result);
             // Store the user ID for later use
             if (result.user?.id) {
               setCurrentUserId(result.user.id);
             }
           } else {
-            console.error("Failed to store user data:", response.statusText);
+            console.error(
+              "Failed to store user data:",
+              userResponse.statusText
+            );
           }
+
+          // Step 2: Fetch token balances (this will be handled by the balance hooks)
+          // The balance hooks will automatically fetch when wallet is connected
+          console.log(
+            "Token balances will be fetched when wallet is connected"
+          );
+
+          // Step 3: Mark data as loaded
+          setIsDataLoaded(true);
+
+          // Step 4: Call sdk.actions.ready() after all data is fetched
+          console.log("Calling sdk.actions.ready()...");
+          await sdk.actions.ready();
+          console.log("sdk.actions.ready() completed successfully");
         } catch (error) {
-          console.error("Error storing user data:", error);
+          console.error("Error during app initialization:", error);
+          // Still mark as loaded to prevent infinite retries
+          setIsDataLoaded(true);
         }
       };
 
-      storeUserData();
+      initializeApp();
     }
-  }, [context?.user?.fid, context?.user?.username]);
+  }, [context?.user?.fid, context?.user?.username, isDataLoaded]);
 
   // Handle transaction confirmation
   useEffect(() => {
@@ -291,8 +314,9 @@ export default function App(
   // Payment functions
 
   const executePaymentTransaction = useCallback(async () => {
+    console.log("calling execute payyyy---------");
     if (!currentPayingRequest || !evmAddress || !chainId) {
-      console.error("Missing required data for payment");
+      console.log("Missing required data for payment");
       return;
     }
 

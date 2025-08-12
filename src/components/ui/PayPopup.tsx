@@ -26,7 +26,7 @@ import {
   getGatewayAddress,
   type TokenInfo,
 } from "../../lib/tokens";
-import { useTokenApproval } from "../../hooks/useTokenApproval";
+import { checkTokenApprovalNeeded } from "../../lib/tokenUtils";
 
 interface PayPopupProps {
   isOpen: boolean;
@@ -52,16 +52,17 @@ export default function PayPopup({
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isApprovalStep, setIsApprovalStep] = useState(false);
+  const [isBridgeStep, setIsBridgeStep] = useState(false);
 
-  // Use the approval hook
-  const {
-    needsApproval,
-    isCheckingApproval,
-    executeApproval,
-    isApproving,
-    error: approvalError,
-    resetApproval,
-  } = useTokenApproval(selectedToken, amount);
+  // Ref to track processed transactions to prevent duplicate processing
+  const processedTransactions = React.useRef<Set<string>>(new Set());
+
+  // Token approval state management
+  const [needsApproval, setNeedsApproval] = useState(false);
+  const [isCheckingApproval, setIsCheckingApproval] = useState(false);
+  const [approvalAmount, setApprovalAmount] = useState<bigint>(0n);
+  const [isApproving, setIsApproving] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   const { users, isSearching, searchQuery, setSearchQuery, clearSearch } =
     useFarcasterUserSearch();
@@ -110,6 +111,155 @@ export default function PayPopup({
     }
   }, [chainId, tokenOptions, selectedToken, onTokenChange]);
 
+  // Check approval status
+  const checkApproval = React.useCallback(async () => {
+    if (!address || !chainId || !publicClient) {
+      console.log("=== CHECK APPROVAL - MISSING DATA ===");
+      console.log("address:", !!address);
+      console.log("chainId:", chainId);
+      console.log("publicClient:", !!publicClient);
+      setNeedsApproval(false);
+      return;
+    }
+
+    console.log("=== CHECKING TOKEN APPROVAL ===");
+    console.log("Input parameters:", {
+      chainId,
+      selectedToken,
+      amount,
+      address,
+    });
+
+    setIsCheckingApproval(true);
+    setError(null);
+
+    try {
+      const result = await checkTokenApprovalNeeded(
+        publicClient,
+        chainId,
+        selectedToken,
+        address,
+        amount
+      );
+
+      console.log("=== APPROVAL CHECK RESULT ===");
+      console.log("needsApproval:", result.needsApproval);
+      console.log("requiredAmount:", result.requiredAmount?.toString());
+
+      setNeedsApproval(result.needsApproval);
+      if (result.needsApproval) {
+        setApprovalAmount(result.requiredAmount);
+      }
+    } catch (error) {
+      console.error("=== ERROR CHECKING APPROVAL ===");
+      console.error("Error details:", error);
+      setError("Failed to check token approval");
+      setNeedsApproval(false);
+    } finally {
+      setIsCheckingApproval(false);
+    }
+  }, [address, chainId, publicClient, selectedToken, amount]);
+
+  // Execute approval transaction
+  const executeApproval = React.useCallback(async () => {
+    if (!address || !chainId || !publicClient) {
+      setApprovalError("Missing required data for approval");
+      return;
+    }
+
+    setIsApproving(true);
+    setApprovalError(null);
+
+    try {
+      const tokenInfo = getTokenInfo(chainId, selectedToken);
+      if (!tokenInfo) {
+        throw new Error(`Token ${selectedToken} not found on chain ${chainId}`);
+      }
+
+      const gatewayAddress = getGatewayAddress(chainId);
+      if (gatewayAddress === "Native Integration") {
+        throw new Error("No approval needed for native integration");
+      }
+
+      // Create approval transaction data
+      const approvalData = encodeFunctionData({
+        abi: [
+          {
+            inputs: [
+              { name: "spender", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+            name: "approve",
+            outputs: [{ name: "", type: "bool" }],
+            stateMutability: "nonpayable",
+            type: "function",
+          },
+        ],
+        functionName: "approve",
+        args: [gatewayAddress as `0x${string}`, approvalAmount],
+      });
+
+      console.log("=== EXECUTING APPROVAL ===");
+      console.log("Token:", tokenInfo.address);
+      console.log("Gateway:", gatewayAddress);
+      console.log("Amount:", approvalAmount.toString());
+
+      sendTransaction({
+        to: tokenInfo.address as `0x${string}`,
+        data: approvalData,
+      });
+    } catch (err) {
+      console.error("=== APPROVAL FAILED ===");
+      console.error("Error details:", err);
+      setApprovalError(err instanceof Error ? err.message : "Approval failed");
+    } finally {
+      setIsApproving(false);
+    }
+  }, [
+    address,
+    chainId,
+    publicClient,
+    selectedToken,
+    approvalAmount,
+    sendTransaction,
+  ]);
+
+  // Reset approval state
+  const resetApproval = React.useCallback(() => {
+    setNeedsApproval(false);
+    setIsCheckingApproval(false);
+    setApprovalAmount(0n);
+    setError(null);
+    setIsApproving(false);
+    setApprovalError(null);
+    setIsBridgeStep(false);
+    processedTransactions.current.clear();
+  }, []);
+
+  // Set approval as complete
+  const setApprovalComplete = React.useCallback(() => {
+    setNeedsApproval(false);
+    setIsApproving(false);
+  }, []);
+
+  // Check approval when amount, token, address, or chain changes
+  React.useEffect(() => {
+    if (
+      amount &&
+      amount.trim() !== "" &&
+      parseFloat(amount) > 0 &&
+      selectedToken &&
+      address &&
+      chainId
+    ) {
+      checkApproval();
+    } else {
+      // Reset approval state if no valid amount
+      setNeedsApproval(false);
+      setApprovalAmount(0n);
+    }
+  }, [checkApproval, amount, selectedToken, address, chainId]);
+
   // Handle transaction errors or cancellation
   React.useEffect(() => {
     if (isTransactionError) {
@@ -125,6 +275,36 @@ export default function PayPopup({
       );
     }
   }, [isTransactionError, transactionError]);
+
+  // Handle approval transaction errors
+  React.useEffect(() => {
+    if (isTransactionError && isApproving) {
+      console.error(
+        "Approval transaction failed or was cancelled:",
+        transactionError
+      );
+      setIsApproving(false);
+      setApprovalError(
+        transactionError?.message ||
+          "Approval transaction was cancelled or failed"
+      );
+    }
+  }, [isTransactionError, transactionError, isApproving]);
+
+  // Re-check approval status after transaction is confirmed
+  React.useEffect(() => {
+    if (isTransactionConfirmed && isApproving) {
+      console.log(
+        "=== APPROVAL TRANSACTION CONFIRMED - RE-CHECKING APPROVAL ==="
+      );
+      console.log("Transaction hash:", transactionHash);
+      setIsApproving(false);
+      // Set approval as no longer needed immediately
+      setNeedsApproval(false);
+      // Then re-check to confirm
+      checkApproval();
+    }
+  }, [isTransactionConfirmed, isApproving, checkApproval, transactionHash]);
 
   const handleApproval = async () => {
     console.log("=== HANDLE APPROVAL CALLED ===");
@@ -166,6 +346,7 @@ export default function PayPopup({
 
     console.log("=== STARTING BRIDGE TRANSACTION PROCESS ===");
     setIsProcessing(true);
+    setIsBridgeStep(true);
     setError(null);
 
     try {
@@ -262,14 +443,14 @@ export default function PayPopup({
       });
 
       console.log("=== BRIDGE TRANSACTION SENT ===");
+      // Don't set isProcessing to false here - let the transaction confirmation handle it
     } catch (err) {
       console.error("=== BRIDGE TRANSACTION FAILED ===");
       console.error("Error details:", err);
       setError(
         err instanceof Error ? err.message : "Bridge transaction failed"
       );
-    } finally {
-      setIsProcessing(false);
+      setIsProcessing(false); // Only set to false on error
     }
   }, [
     selectedRecipient,
@@ -284,7 +465,15 @@ export default function PayPopup({
 
   // Reset approval status when transaction is confirmed
   React.useEffect(() => {
-    if (isTransactionConfirmed) {
+    if (isTransactionConfirmed && transactionHash) {
+      // Prevent duplicate processing of the same transaction
+      if (processedTransactions.current.has(transactionHash)) {
+        console.log("=== TRANSACTION ALREADY PROCESSED ===");
+        return;
+      }
+
+      processedTransactions.current.add(transactionHash);
+
       console.log("=== TRANSACTION CONFIRMED ===");
       console.log("isApprovalStep:", isApprovalStep);
       console.log("Transaction hash:", transactionHash);
@@ -295,11 +484,15 @@ export default function PayPopup({
         );
         // If this was an approval transaction, proceed to execute the bridge transaction
         setIsApprovalStep(false);
+        // Force immediate approval state update
+        setApprovalComplete();
         // Execute bridge transaction immediately after approval
         executeBridgeTransaction();
-      } else {
+      } else if (isBridgeStep) {
         console.log("=== PAY TRANSACTION CONFIRMED - RESETTING POPUP ===");
-        // If this was a bridge transaction, reset everything
+        // If this was a bridge transaction, reset everything and close popup
+        setIsProcessing(false); // Stop the processing state
+        setIsBridgeStep(false);
         resetApproval();
         setSelectedRecipient(null);
         clearSearch();
@@ -309,42 +502,23 @@ export default function PayPopup({
     }
   }, [
     isTransactionConfirmed,
-    isApprovalStep,
-    executeBridgeTransaction,
     transactionHash,
+    isApprovalStep,
+    isBridgeStep,
+    executeBridgeTransaction,
     resetApproval,
     setSelectedRecipient,
     clearSearch,
     onAmountChange,
     onClose,
+    setApprovalComplete,
   ]);
 
   // Monitor approval status changes and auto-proceed to payment when approval is no longer needed
-  React.useEffect(() => {
-    console.log("=== APPROVAL STATUS MONITOR ===");
-    console.log("isApprovalStep:", isApprovalStep);
-    console.log("needsApproval:", needsApproval);
-    console.log("isApproving:", isApproving);
-    console.log("isCheckingApproval:", isCheckingApproval);
+  // Removed this effect as it was causing conflicts with the transaction confirmation flow
 
-    if (
-      isApprovalStep &&
-      !needsApproval &&
-      !isApproving &&
-      !isCheckingApproval
-    ) {
-      console.log("=== APPROVAL COMPLETE - AUTO-PROCEEDING TO PAY ===");
-      // Approval is complete, proceed to payment
-      setIsApprovalStep(false);
-      executeBridgeTransaction();
-    }
-  }, [
-    needsApproval,
-    isApprovalStep,
-    isApproving,
-    isCheckingApproval,
-    executeBridgeTransaction,
-  ]);
+  // Force re-check approval when approval transaction is confirmed
+  // Removed this effect as it was causing conflicts with the transaction confirmation flow
 
   const handlePay = async () => {
     console.log("=== HANDLE PAY CALLED ===");
@@ -379,6 +553,7 @@ export default function PayPopup({
     setError(null);
     setIsProcessing(false);
     setIsApprovalStep(false);
+    setIsBridgeStep(false);
     resetApproval();
     setSelectedRecipient(null);
     clearSearch();
@@ -629,18 +804,6 @@ export default function PayPopup({
           <NumberPad amount={amount} onAmountChange={onAmountChange} />
 
           {/* Error Display */}
-          {(error || approvalError) && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-              <p className="text-red-600 text-sm">{error || approvalError}</p>
-            </div>
-          )}
-
-          {/* Transaction Status */}
-          {isProcessing && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <p className="text-blue-600 text-sm">Processing transaction...</p>
-            </div>
-          )}
 
           {/* Pay Button */}
           <button
@@ -667,6 +830,8 @@ export default function PayPopup({
               : isProcessing || isApproving
               ? isApprovalStep
                 ? "Approving..."
+                : isBridgeStep
+                ? "Processing Payment..."
                 : "Processing..."
               : needsApproval
               ? "Approve & Pay"
