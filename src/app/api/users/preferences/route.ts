@@ -7,10 +7,7 @@ const CHAIN_ID_TO_ENUM: Record<number, string> = {
   8453: "BASE",
   56: "BNB",
   42161: "ARBITRUM",
-  42162: "HYPERLIQUID",
-  30732: "MOVEMENT",
   1329: "SOLANA",
-  1330: "SEI",
   137: "POLYGON",
 };
 
@@ -20,37 +17,20 @@ const CHAIN_ENUM_TO_ID: Record<string, number> = {
   BASE: 8453,
   BNB: 56,
   ARBITRUM: 42161,
-  HYPERLIQUID: 42162,
-  MOVEMENT: 30732,
   SOLANA: 1329,
-  SEI: 1330,
   POLYGON: 137,
 };
 
 // Mapping from token symbols to Token enum values
 const TOKEN_SYMBOL_TO_ENUM: Record<string, string> = {
-  ETH: "ETH",
   USDC: "USDC",
-  "BSC-USD": "BSC_USD",
   USDT: "USDT",
-  BNB: "BNB",
-  MOVE: "MOVE",
-  POL: "POL",
-  SEI: "SEI",
-  SOL: "SOL",
 };
 
 // Mapping from Token enum values to token symbols
 const TOKEN_ENUM_TO_SYMBOL: Record<string, string> = {
-  ETH: "ETH",
   USDC: "USDC",
-  BSC_USD: "BSC-USD",
   USDT: "USDT",
-  BNB: "BNB",
-  MOVE: "MOVE",
-  POL: "POL",
-  SEI: "SEI",
-  SOL: "SOL",
 };
 
 export async function GET(request: Request) {

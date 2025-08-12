@@ -14,24 +14,14 @@ const CHAIN_ENUM_TO_ID: Record<string, number> = {
   BASE: 8453,
   BNB: 56,
   ARBITRUM: 42161,
-  HYPERLIQUID: 42162,
-  MOVEMENT: 30732,
   SOLANA: 1329,
-  SEI: 1330,
   POLYGON: 137,
 };
 
 // Mapping from Token enum values to token symbols
 const TOKEN_ENUM_TO_SYMBOL: Record<string, string> = {
-  ETH: "ETH",
   USDC: "USDC",
-  BSC_USD: "BSC-USD",
   USDT: "USDT",
-  BNB: "BNB",
-  MOVE: "MOVE",
-  POL: "POL",
-  SEI: "SEI",
-  SOL: "SOL",
 };
 
 // Validation schema for simplified bridge request

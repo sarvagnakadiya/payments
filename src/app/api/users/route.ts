@@ -1,49 +1,7 @@
 import { NeynarAPIClient } from "@neynar/nodejs-sdk";
 import { NextResponse } from "next/server";
 import { prisma } from "~/lib/prisma";
-
-export async function GET(request: Request) {
-  const apiKey = process.env.NEYNAR_API_KEY;
-  const { searchParams } = new URL(request.url);
-  const fids = searchParams.get("fids");
-
-  if (!apiKey) {
-    return NextResponse.json(
-      {
-        error:
-          "Neynar API key is not configured. Please add NEYNAR_API_KEY to your environment variables.",
-      },
-      { status: 500 }
-    );
-  }
-
-  if (!fids) {
-    return NextResponse.json(
-      { error: "FIDs parameter is required" },
-      { status: 400 }
-    );
-  }
-
-  try {
-    const neynar = new NeynarAPIClient({ apiKey });
-    const fidsArray = fids.split(",").map((fid) => parseInt(fid.trim()));
-
-    const { users } = await neynar.fetchBulkUsers({
-      fids: fidsArray,
-    });
-
-    return NextResponse.json({ users });
-  } catch (error) {
-    console.error("Failed to fetch users:", error);
-    return NextResponse.json(
-      {
-        error:
-          "Failed to fetch users. Please check your Neynar API key and try again.",
-      },
-      { status: 500 }
-    );
-  }
-}
+import { getNeynarUser } from "~/lib/neynar";
 
 export async function POST(request: Request) {
   try {
@@ -66,35 +24,32 @@ export async function POST(request: Request) {
     });
 
     if (existingUser) {
-      // Update existing user if needed
-      const updatedUser = await prisma.user.update({
-        where: { id: existingUser.id },
-        data: {
-          fid: fid.toString(),
-          username,
-          usernameSource,
-          // Keep existing preferences if they exist
-          preferredChain: existingUser.preferredChain,
-          preferredToken: existingUser.preferredToken,
-          preferredAddress: existingUser.preferredAddress,
-        },
-      });
-
       return NextResponse.json({
-        message: "User updated successfully",
-        user: updatedUser,
+        message: "User already exists",
+        user: existingUser,
       });
     }
 
-    // Create new user with default preferences
+    // For new users, attempt to fetch preferred address from Neynar (primary ETH)
+    let preferredAddress = "";
+    try {
+      const neynarUser = await getNeynarUser(Number(fid));
+      preferredAddress =
+        neynarUser?.verified_addresses?.primary?.eth_address ?? "";
+    } catch (err) {
+      // Swallow errors to avoid blocking user creation if Neynar is unavailable
+      preferredAddress = "";
+    }
+
+    // Create new user with defaults and inferred preferred address
     const newUser = await prisma.user.create({
       data: {
         fid: fid.toString(),
         username,
         usernameSource,
-        preferredChain: "ETHEREUM", // Default chain
-        preferredToken: "USDC", // Default token
-        preferredAddress: "", // Will be set when user connects wallet
+        preferredChain: "BASE",
+        preferredToken: "USDC",
+        preferredAddress,
       },
     });
 

@@ -74,9 +74,8 @@ export default function App(
     null
   );
   const [currentPayingRequest, setCurrentPayingRequest] = useState<any>(null);
-  const transactionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
+  // Track which transaction hash has already been processed to avoid double-processing
+  const lastProcessedHashRef = useRef<string | undefined>(undefined);
 
   // --- Hooks ---
   const { isSDKLoaded, context, added, actions } = useMiniApp();
@@ -113,16 +112,12 @@ export default function App(
     hash: transactionHash,
   });
 
-  // We'll manage approval state manually for fund requests to avoid confusion with PayPopup usage
-
-  // Store user data and fetch all required data when Farcaster context is available
   useEffect(() => {
-    if (context?.user?.fid && !isDataLoaded) {
+    if (context?.user?.fid) {
       const initializeApp = async () => {
         try {
           console.log("Initializing app with data fetching...");
-
-          // Step 1: Fetch user data from /api/users
+          // Check if user exists in database
           const userResponse = await fetch("/api/users", {
             method: "POST",
             headers: {
@@ -171,54 +166,37 @@ export default function App(
 
       initializeApp();
     }
-  }, [context?.user?.fid, context?.user?.username, isDataLoaded]);
+  }, [context?.user?.fid, context?.user?.username]);
 
   // Handle transaction errors or cancellation
   useEffect(() => {
     if (isTransactionError && currentPayingRequest && paymentStep) {
       console.error("Transaction failed or was cancelled:", transactionError);
 
-      // Clear any existing timeout
-      if (transactionTimeoutRef.current) {
-        clearTimeout(transactionTimeoutRef.current);
-        transactionTimeoutRef.current = null;
-      }
-
       // Reset payment state
       setCurrentPayingRequest(null);
       setPaymentStep(null);
       setPayingRequestId(null);
+
+      // Reset guard
+      lastProcessedHashRef.current = undefined;
 
       // You could show an error message here if needed
       console.log("Payment process cancelled or failed");
     }
   }, [isTransactionError, transactionError, currentPayingRequest, paymentStep]);
 
-  // Clean up timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (transactionTimeoutRef.current) {
-        clearTimeout(transactionTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // Auto-add mini app if not added
+  // Auto-add mini app if not added (no delay)
   useEffect(() => {
     if (context && !added) {
-      // Add a small delay to ensure everything is loaded
-      const timer = setTimeout(() => {
-        actions
-          .addMiniApp()
-          .then(() => {
-            console.log("addMiniApp() completed successfully");
-          })
-          .catch((error) => {
-            console.error("addMiniApp() failed:", error);
-          });
-      }, 1000);
-
-      return () => clearTimeout(timer);
+      actions
+        .addMiniApp()
+        .then(() => {
+          console.log("addMiniApp() completed successfully");
+        })
+        .catch((error) => {
+          console.error("addMiniApp() failed:", error);
+        });
     }
   }, [context, added, actions]);
 
@@ -310,17 +288,6 @@ export default function App(
         throw new Error("Invalid bridge transaction data received from API");
       }
 
-      // Set a timeout for payment transaction as well
-      const timeout = setTimeout(() => {
-        console.log("Payment transaction timed out");
-        setCurrentPayingRequest(null);
-        setPaymentStep(null);
-        setPayingRequestId(null);
-        transactionTimeoutRef.current = null;
-      }, 5 * 60 * 1000);
-
-      transactionTimeoutRef.current = timeout;
-
       // Execute the bridge transaction
       sendTransaction({
         to: bridgeTransaction.to as `0x${string}`,
@@ -337,24 +304,22 @@ export default function App(
   // Handle transaction confirmation
   useEffect(() => {
     if (isTransactionConfirmed && currentPayingRequest && paymentStep) {
-      // Clear timeout since transaction was successful
-      if (transactionTimeoutRef.current) {
-        clearTimeout(transactionTimeoutRef.current);
-        transactionTimeoutRef.current = null;
-      }
+      // Guard to avoid double-processing same hash
+      if (lastProcessedHashRef.current === transactionHash) return;
+      lastProcessedHashRef.current = transactionHash;
 
       if (paymentStep === "approval") {
-        // Approval transaction confirmed, now execute payment
+        // Approval transaction confirmed, now execute payment immediately
         setPaymentStep("payment");
-        setTimeout(() => {
-          executePaymentTransaction();
-        }, 2000);
+        executePaymentTransaction();
       } else if (paymentStep === "payment") {
         // Payment transaction confirmed, update request status
         updateRequestStatus(currentPayingRequest.id, "ACCEPTED");
         setCurrentPayingRequest(null);
         setPaymentStep(null);
         setPayingRequestId(null);
+        // Reset guard for next flow
+        lastProcessedHashRef.current = undefined;
       }
     }
   }, [
@@ -363,6 +328,7 @@ export default function App(
     paymentStep,
     updateRequestStatus,
     executePaymentTransaction,
+    transactionHash,
   ]);
 
   const handlePayRequest = async (request: any) => {
@@ -457,17 +423,6 @@ export default function App(
       console.log("Gateway:", gatewayAddress);
       console.log("Required Amount:", requiredAmount.toString());
       console.log("Request Amount:", request.amount);
-
-      // Set a timeout to reset state if transaction takes too long (5 minutes)
-      const timeout = setTimeout(() => {
-        console.log("Approval transaction timed out");
-        setCurrentPayingRequest(null);
-        setPaymentStep(null);
-        setPayingRequestId(null);
-        transactionTimeoutRef.current = null;
-      }, 5 * 60 * 1000);
-
-      transactionTimeoutRef.current = timeout;
 
       sendTransaction({
         to: tokenInfo.address as `0x${string}`,
@@ -892,6 +847,7 @@ export default function App(
         evmAddress={evmAddress}
         solanaAddress={solanaPublicKey?.toString()}
         userId={currentUserId}
+        fid={context?.user?.fid}
         onPreferencesUpdated={() => {
           console.log("Preferences updated successfully");
           // You can add additional logic here, like refreshing user data

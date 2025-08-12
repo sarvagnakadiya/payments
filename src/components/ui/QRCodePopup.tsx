@@ -29,11 +29,10 @@ export default function QRCodePopup({
   const qrRef = useRef<HTMLDivElement>(null);
   const qrCode = useRef<QRCodeStyling | null>(null);
 
-  // Sample token options
+  // Sample token options (restrict to stablecoins)
   const tokenOptions = [
     { symbol: "USDC", name: "USD Coin", icon: "💵" },
-    { symbol: "ETH", name: "Ethereum", icon: "⟠" },
-    { symbol: "BTC", name: "Bitcoin", icon: "₿" },
+    { symbol: "USDT", name: "Tether USD", icon: "💵" },
   ];
 
   const selectedTokenInfo = tokenOptions.find(

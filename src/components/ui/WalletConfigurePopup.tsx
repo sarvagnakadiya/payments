@@ -23,6 +23,7 @@ interface WalletConfigurePopupProps {
   evmAddress?: string;
   solanaAddress?: string;
   userId?: string;
+  fid?: number;
   onPreferencesUpdated?: () => void;
 }
 
@@ -34,6 +35,7 @@ export default function WalletConfigurePopup({
   evmAddress,
   solanaAddress,
   userId,
+  fid,
   onPreferencesUpdated,
 }: WalletConfigurePopupProps) {
   const [selectedChainId, setSelectedChainId] = useState<number>(8453); // Default to Base
@@ -47,6 +49,10 @@ export default function WalletConfigurePopup({
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [walletsLoading, setWalletsLoading] = useState(false);
+  const [evmAddressesList, setEvmAddressesList] = useState<string[]>([]);
+  const [solanaAddressesList, setSolanaAddressesList] = useState<string[]>([]);
+  const [preferredAddress, setPreferredAddress] = useState<string>("");
 
   // Get all supported chains and their tokens
   const supportedChainIds = getSupportedChainIds();
@@ -55,25 +61,25 @@ export default function WalletConfigurePopup({
   const selectedTokenInfo = selectedChainTokens.find(
     (t) => t.symbol === selectedTokenSymbol
   );
+  const isSolanaSelected = selectedChainId === 1329;
 
-  // Load user preferences when component mounts or userId changes
+  // Load user preferences by fid when component mounts or fid changes
   const loadUserPreferences = React.useCallback(async () => {
-    if (!userId) return;
+    if (!fid) return;
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/users/${userId}`);
+      const response = await fetch(`/api/users/preferences?fid=${fid}`);
       if (response.ok) {
-        const userData = await response.json();
-        if (userData.user) {
-          // Convert enum values back to chain ID and token symbol
-          const chainId = getChainIdFromEnum(userData.user.preferredChain);
-          const tokenSymbol = getTokenSymbolFromEnum(
-            userData.user.preferredToken
-          );
-
-          if (chainId) setSelectedChainId(chainId);
-          if (tokenSymbol) setSelectedTokenSymbol(tokenSymbol);
+        const data = await response.json();
+        const prefs = data.user;
+        if (prefs) {
+          if (prefs.preferredChainId)
+            setSelectedChainId(prefs.preferredChainId);
+          if (prefs.preferredTokenSymbol)
+            setSelectedTokenSymbol(prefs.preferredTokenSymbol);
+          if (prefs.preferredAddress)
+            setPreferredAddress(prefs.preferredAddress);
         }
       }
     } catch (error) {
@@ -81,72 +87,81 @@ export default function WalletConfigurePopup({
     } finally {
       setIsLoading(false);
     }
-  }, [userId]);
+  }, [fid]);
 
   useEffect(() => {
-    if (userId) {
+    if (fid) {
       loadUserPreferences();
     }
-  }, [userId, loadUserPreferences]);
+  }, [fid, loadUserPreferences]);
+
+  // Load wallet addresses from Neynar via API
+  useEffect(() => {
+    const loadWallets = async () => {
+      if (!fid) return;
+      setWalletsLoading(true);
+      try {
+        const res = await fetch(`/api/users/wallets?fid=${fid}`);
+        if (res.ok) {
+          const json = await res.json();
+          setEvmAddressesList(json.evmAddresses || []);
+          setSolanaAddressesList(json.solanaAddresses || []);
+        }
+      } catch (err) {
+        console.error("Error loading wallets:", err);
+      } finally {
+        setWalletsLoading(false);
+      }
+    };
+    loadWallets();
+  }, [fid]);
+
+  // Enforce address type based on selected chain (EVM vs Solana)
+  useEffect(() => {
+    // If Solana chain selected, enforce Solana address
+    if (isSolanaSelected) {
+      if (solanaAddressesList.length === 0) {
+        if (preferredAddress) {
+          setPreferredAddress("");
+          setHasChanges(true);
+        }
+        return;
+      }
+      if (!solanaAddressesList.includes(preferredAddress)) {
+        setPreferredAddress(solanaAddressesList[0]);
+        setHasChanges(true);
+      }
+      return;
+    }
+
+    // Else EVM chain selected, enforce EVM address (case-insensitive)
+    if (evmAddressesList.length === 0) {
+      if (preferredAddress) {
+        setPreferredAddress("");
+        setHasChanges(true);
+      }
+      return;
+    }
+    const lower = preferredAddress?.toLowerCase?.() ?? "";
+    const hasMatch = evmAddressesList.some(
+      (a) => (a?.toLowerCase?.() ?? a) === lower
+    );
+    if (!hasMatch) {
+      setPreferredAddress(evmAddressesList[0]);
+      setHasChanges(true);
+    }
+  }, [isSolanaSelected, evmAddressesList, solanaAddressesList]);
 
   // Helper functions to convert enum values back to chain ID and token symbol
-  const getChainIdFromEnum = (chainEnum: string): number | null => {
-    const enumToChainId: Record<string, number> = {
-      ETHEREUM: 1,
-      BASE: 8453,
-      BNB: 56,
-      ARBITRUM: 42161,
-      HYPERLIQUID: 42162,
-      MOVEMENT: 30732,
-      SOLANA: 1329,
-      SEI: 1330,
-      POLYGON: 137,
-    };
-    return enumToChainId[chainEnum] || null;
-  };
+  // removed enum converters; preferences GET returns chainId and token symbol directly
 
-  const getTokenSymbolFromEnum = (tokenEnum: string): string | null => {
-    const enumToTokenSymbol: Record<string, string> = {
-      ETH: "ETH",
-      USDC: "USDC",
-      BSC_USD: "BSC-USD",
-      USDT: "USDT",
-      BNB: "BNB",
-      MOVE: "MOVE",
-      POL: "POL",
-      SEI: "SEI",
-    };
-    return enumToTokenSymbol[tokenEnum] || null;
-  };
-
-  // Chain options with colors and icons
-  const chainOptions = supportedChainIds.map((chainId) => {
-    const chain = getChainInfo(chainId);
-    const chainColors = {
-      1: "bg-gradient-to-r from-purple-500 via-blue-500 to-green-500", // Ethereum
-      8453: "bg-gradient-to-r from-blue-500 to-purple-500", // Base
-      10: "bg-gradient-to-r from-red-500 to-orange-500", // Optimism
-      666666666: "bg-gradient-to-r from-purple-500 to-pink-500", // Degen
-      111111111: "bg-gradient-to-r from-pink-500 to-purple-500", // Unichain
-      42220: "bg-gradient-to-r from-green-500 to-yellow-500", // Celo
-    };
-
-    const chainIcons = {
-      1: "⟠", // Ethereum
-      8453: "🔵", // Base
-      10: "🔴", // Optimism
-      666666666: "🎲", // Degen
-      111111111: "🦄", // Unichain
-      42220: "🌱", // Celo
-    };
-
-    return {
+  // Simple chain list (no icons/colors)
+  const chainList = supportedChainIds
+    .map((chainId) => ({
       id: chainId,
-      name: chain?.name || "Unknown",
-      icon: chainIcons[chainId as keyof typeof chainIcons] || "🔗",
-      color: chainColors[chainId as keyof typeof chainColors] || "bg-gray-500",
-    };
-  });
+      name: getChainInfo(chainId)?.name || "Unknown",
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   if (!isOpen) return null;
 
@@ -190,7 +205,7 @@ export default function WalletConfigurePopup({
           userId,
           preferredChainId: selectedChainId,
           preferredTokenSymbol: selectedTokenSymbol,
-          preferredAddress: evmAddress, // Use EVM address as preferred address
+          preferredAddress: preferredAddress || "",
         }),
       });
 
@@ -299,19 +314,7 @@ export default function WalletConfigurePopup({
                     className="w-full flex items-center justify-between p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
                   >
                     <div className="flex items-center">
-                      <div
-                        className={`w-6 h-6 ${
-                          chainOptions.find((c) => c.id === selectedChainId)
-                            ?.color
-                        } rounded-full flex items-center justify-center mr-3`}
-                      >
-                        <span className="text-white text-xs font-bold">
-                          {
-                            chainOptions.find((c) => c.id === selectedChainId)
-                              ?.icon
-                          }
-                        </span>
-                      </div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full mr-2" />
                       <span className="font-medium text-black">
                         {selectedChainInfo?.name}
                       </span>
@@ -335,19 +338,12 @@ export default function WalletConfigurePopup({
                   {showChainDropdown && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-10">
                       <div className="max-h-48 overflow-y-auto">
-                        {chainOptions.map((chain) => (
+                        {chainList.map((chain) => (
                           <button
                             key={chain.id}
                             onClick={() => handleChainSelect(chain.id)}
                             className="w-full p-2 text-left hover:bg-gray-50 flex items-center"
                           >
-                            <div
-                              className={`w-6 h-6 ${chain.color} rounded-full flex items-center justify-center mr-3`}
-                            >
-                              <span className="text-white text-xs font-bold">
-                                {chain.icon}
-                              </span>
-                            </div>
                             <div>
                               <div className="text-sm font-medium text-black">
                                 {chain.name}
@@ -428,115 +424,120 @@ export default function WalletConfigurePopup({
             )}
           </div>
 
-          {/* Primary Wallet Section */}
+          {/* Receiving Address Section - show all, disable mismatched type */}
           <div className="p-4">
-            <h3 className="font-bold text-black mb-3">Primary wallet</h3>
-            <div className="space-y-2">
-              {/* EVM Wallet */}
-              <div className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
-                <div className="flex items-center">
-                  <div className="w-6 h-6 bg-gradient-to-r from-purple-500 via-blue-500 to-green-500 rounded-full flex items-center justify-center mr-3">
-                    <span className="text-white text-xs font-bold">E</span>
-                  </div>
-                  <div>
-                    <span className="font-medium text-black">EVM</span>
-                    <span className="text-gray-500 ml-2">
-                      {evmAddress
-                        ? truncateAddress(evmAddress)
-                        : "Not connected"}
-                    </span>
-                  </div>
+            <h3 className="font-bold text-black mb-3">Receiving address</h3>
+            <div className="space-y-3">
+              <div>
+                <div className="text-sm font-medium text-black mb-2">EVM</div>
+                <div className="space-y-2">
+                  {walletsLoading && (
+                    <div className="h-10 bg-gray-100 rounded-lg animate-pulse" />
+                  )}
+                  {evmAddressesList.length === 0 && !walletsLoading && (
+                    <div className="text-sm text-gray-500">
+                      No EVM addresses
+                    </div>
+                  )}
+                  {evmAddressesList.map((addr) => {
+                    const isDisabled = isSolanaSelected;
+                    const isSelected =
+                      preferredAddress?.toLowerCase() === addr.toLowerCase();
+                    return (
+                      <button
+                        key={addr}
+                        disabled={isDisabled}
+                        onClick={() => {
+                          if (isDisabled) return;
+                          setPreferredAddress(addr);
+                          setHasChanges(true);
+                        }}
+                        className={`w-full flex items-center justify-between p-2 bg-white border rounded-lg transition-colors ${
+                          isSelected
+                            ? "border-blue-500 bg-blue-50"
+                            : "border-gray-200 hover:bg-gray-50"
+                        } ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                      >
+                        <div className="flex items-center">
+                          <div className="w-6 h-6 bg-gradient-to-r from-purple-500 via-blue-500 to-green-500 rounded-full flex items-center justify-center mr-3">
+                            <span className="text-white text-xs font-bold">
+                              E
+                            </span>
+                          </div>
+                          <span className="text-black text-sm">
+                            {truncateAddress(addr)}
+                          </span>
+                        </div>
+                        {isSelected && (
+                          <CheckIcon
+                            size={16}
+                            weight="bold"
+                            className="text-blue-600"
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
-                <CheckIcon size={16} weight="bold" className="text-green-500" />
               </div>
 
-              {/* Solana Wallet */}
-              <div className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
-                <div className="flex items-center">
-                  <div className="w-6 h-6 bg-purple-500 rounded-full flex items-center justify-center mr-3">
-                    <span className="text-white text-xs font-bold">S</span>
-                  </div>
-                  <div>
-                    <span className="font-medium text-black">Solana</span>
-                    <span className="text-gray-500 ml-2">
-                      {solanaAddress
-                        ? truncateAddress(solanaAddress)
-                        : "Not connected"}
-                    </span>
-                  </div>
+              <div>
+                <div className="text-sm font-medium text-black mb-2">
+                  Solana
                 </div>
-                <CheckIcon size={16} weight="bold" className="text-green-500" />
+                <div className="space-y-2">
+                  {walletsLoading && (
+                    <div className="h-10 bg-gray-100 rounded-lg animate-pulse" />
+                  )}
+                  {solanaAddressesList.length === 0 && !walletsLoading && (
+                    <div className="text-sm text-gray-500">
+                      No Solana addresses
+                    </div>
+                  )}
+                  {solanaAddressesList.map((addr) => {
+                    const isDisabled = !isSolanaSelected;
+                    const isSelected = preferredAddress === addr;
+                    return (
+                      <button
+                        key={addr}
+                        disabled={isDisabled}
+                        onClick={() => {
+                          if (isDisabled) return;
+                          setPreferredAddress(addr);
+                          setHasChanges(true);
+                        }}
+                        className={`w-full flex items-center justify-between p-2 bg-white border rounded-lg transition-colors ${
+                          isSelected
+                            ? "border-purple-500 bg-purple-50"
+                            : "border-gray-200 hover:bg-gray-50"
+                        } ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                      >
+                        <div className="flex items-center">
+                          <div className="w-6 h-6 bg-purple-500 rounded-full flex items-center justify-center mr-3">
+                            <span className="text-white text-xs font-bold">
+                              S
+                            </span>
+                          </div>
+                          <span className="text-black text-sm">
+                            {truncateAddress(addr)}
+                          </span>
+                        </div>
+                        {isSelected && (
+                          <CheckIcon
+                            size={16}
+                            weight="bold"
+                            className="text-purple-600"
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Other Wallets Section */}
-          <div className="p-4">
-            <h3 className="font-bold text-black mb-3">Other Wallets</h3>
-            <div className="space-y-2">
-              {/* EVM Wallet Option */}
-              <button
-                onClick={() => handleOtherWalletSelect("evm")}
-                className="w-full flex items-center justify-between p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                <div className="flex items-center">
-                  <div className="w-6 h-6 bg-gradient-to-r from-purple-500 via-blue-500 to-green-500 rounded-full flex items-center justify-center mr-3">
-                    <span className="text-white text-xs font-bold">E</span>
-                  </div>
-                  <div>
-                    <span className="font-medium text-black">EVM</span>
-                    <span className="text-gray-500 ml-2">
-                      {evmAddress
-                        ? truncateAddress(evmAddress)
-                        : "Not connected"}
-                    </span>
-                  </div>
-                </div>
-                <div
-                  className={`w-4 h-4 border-2 rounded-full ${
-                    selectedOtherWallet === "evm"
-                      ? "border-blue-500 bg-blue-500"
-                      : "border-gray-300"
-                  }`}
-                >
-                  {selectedOtherWallet === "evm" && (
-                    <div className="w-2 h-2 bg-white rounded-full m-0.5"></div>
-                  )}
-                </div>
-              </button>
-
-              {/* Solana Wallet Option */}
-              <button
-                onClick={() => handleOtherWalletSelect("solana")}
-                className="w-full flex items-center justify-between p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                <div className="flex items-center">
-                  <div className="w-6 h-6 bg-purple-500 rounded-full flex items-center justify-center mr-3">
-                    <span className="text-white text-xs font-bold">S</span>
-                  </div>
-                  <div>
-                    <span className="font-medium text-black">Solana</span>
-                    <span className="text-gray-500 ml-2">
-                      {solanaAddress
-                        ? truncateAddress(solanaAddress)
-                        : "Not connected"}
-                    </span>
-                  </div>
-                </div>
-                <div
-                  className={`w-4 h-4 border-2 rounded-full ${
-                    selectedOtherWallet === "solana"
-                      ? "border-purple-500 bg-purple-500"
-                      : "border-gray-300"
-                  }`}
-                >
-                  {selectedOtherWallet === "solana" && (
-                    <div className="w-2 h-2 bg-white rounded-full m-0.5"></div>
-                  )}
-                </div>
-              </button>
-            </div>
-          </div>
+          {/* Other Wallets Section removed in favor of explicit address lists */}
 
           {/* Add Wallets Button */}
           <div className="p-4 pb-20"></div>

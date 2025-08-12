@@ -104,12 +104,12 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
     blockExplorerUrls: ["https://bscscan.com"],
     tokens: [
       {
-        symbol: "BSC-USD",
-        name: "BSC USD",
+        symbol: "USDT",
+        name: "Tether USD",
         icon: "💵",
         decimals: 18,
         address: "0x55d398326f99059fF775485246999027B3197955",
-        coingeckoId: "busd",
+        coingeckoId: "tether",
       },
     ],
   },
@@ -128,14 +128,6 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
     rpcUrls: ["https://arb1.arbitrum.io/rpc"],
     blockExplorerUrls: ["https://arbiscan.io"],
     tokens: [
-      // {
-      //   symbol: "ETH",
-      //   name: "Ethereum",
-      //   icon: "⟠",
-      //   decimals: 18,
-      //   address: "0x0000000000000000000000000000000000000000", // Native token
-      //   coingeckoId: "ethereum",
-      // },
       {
         symbol: "USDC",
         name: "USD Coin",
@@ -143,64 +135,6 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
         decimals: 6,
         address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
         coingeckoId: "usd-coin",
-      },
-    ],
-  },
-
-  // Hyperliquid
-  42162: {
-    id: 42162,
-    gasyardId: 5,
-    name: "Hyperliquid",
-    gatewayContract: "0x6a2A5B7D0434CC5b77e304bc9D68C20Dee805152",
-    nativeCurrency: {
-      name: "Ether",
-      symbol: "ETH",
-      decimals: 18,
-    },
-    rpcUrls: ["https://arb1.arbitrum.io/rpc"],
-    blockExplorerUrls: ["https://arbiscan.io"],
-    tokens: [
-      {
-        symbol: "USDC",
-        name: "USD Coin",
-        icon: "💵",
-        decimals: 6,
-        address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
-        coingeckoId: "usd-coin",
-      },
-    ],
-  },
-
-  // Movement
-  30732: {
-    id: 30732,
-    gasyardId: 6,
-    name: "Movement",
-    gatewayContract: "Native Integration",
-    nativeCurrency: {
-      name: "MOVE",
-      symbol: "MOVE",
-      decimals: 18,
-    },
-    rpcUrls: ["https://mevm.movementnetwork.xyz"],
-    blockExplorerUrls: ["https://explorer.movementnetwork.xyz"],
-    tokens: [
-      {
-        symbol: "USDC",
-        name: "USD Coin",
-        icon: "💵",
-        decimals: 6,
-        address: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff",
-        coingeckoId: "usd-coin",
-      },
-      {
-        symbol: "USDT",
-        name: "Tether USD",
-        icon: "💵",
-        decimals: 6,
-        address: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff",
-        coingeckoId: "tether",
       },
     ],
   },
@@ -234,31 +168,6 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
         decimals: 6,
         address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
         coingeckoId: "tether",
-      },
-    ],
-  },
-
-  // Sei
-  1330: {
-    id: 1330,
-    gasyardId: 9,
-    name: "Sei",
-    gatewayContract: "0x852512A601EB3Bb0973f35b1c1d77966F0EDe676",
-    nativeCurrency: {
-      name: "Sei",
-      symbol: "SEI",
-      decimals: 6,
-    },
-    rpcUrls: ["https://rpc.wallet.sei.io"],
-    blockExplorerUrls: ["https://sei.explorers.guru"],
-    tokens: [
-      {
-        symbol: "USDC",
-        name: "USD Coin",
-        icon: "💵",
-        decimals: 6,
-        address: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff",
-        coingeckoId: "usd-coin",
       },
     ],
   },

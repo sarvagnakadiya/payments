@@ -30,23 +30,13 @@ enum Chain {
   BASE
   BNB
   ARBITRUM
-  HYPERLIQUID
-  MOVEMENT
   SOLANA
-  SEI
   POLYGON
 }
 
 enum Token {
-  ETH
   USDC
-  BSC_USD
   USDT
-  BNB
-  MOVE
-  POL
-  SEI
-  SOL
 }
 
 model User {
