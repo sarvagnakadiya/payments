@@ -9,8 +9,7 @@ interface NumberPadProps {
 
 export default function NumberPad({ amount, onAmountChange }: NumberPadProps) {
   const handleNumberInput = (num: string) => {
-    // Convert "0.00" to "0" for easier handling
-    const currentAmount = amount === "0.00" ? "0" : amount;
+    const currentAmount = amount;
 
     if (num === "backspace") {
       // Remove the last character
@@ -50,34 +49,53 @@ export default function NumberPad({ amount, onAmountChange }: NumberPadProps) {
     }
   };
 
+  // Check if we have 2 decimal places to disable digit buttons
+  const hasTwoDecimalPlaces =
+    amount.includes(".") && amount.split(".")[1]?.length >= 2;
+
   return (
     <div className="grid grid-cols-3 gap-3 py-1">
       {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
         <button
           key={num}
           onClick={() => handleNumberInput(num.toString())}
-          className="w-16 h-14 flex items-center justify-center text-2xl font-normal text-black hover:bg-gray-50 transition-colors mx-auto rounded-full"
+          disabled={hasTwoDecimalPlaces}
+          className={`w-16 h-14 flex items-center justify-center text-2xl font-normal transition-colors mx-auto rounded-full ${
+            hasTwoDecimalPlaces
+              ? "text-gray-300 cursor-not-allowed"
+              : "text-black hover:bg-gray-50"
+          }`}
         >
           {num}
         </button>
       ))}
       <button
         onClick={() => handleNumberInput(".")}
-        className="w-16 h-14 flex items-center justify-center text-2xl font-normal text-black hover:bg-gray-50 transition-colors mx-auto rounded-full"
+        disabled={amount.includes(".") || hasTwoDecimalPlaces}
+        className={`w-16 h-14 flex items-center justify-center text-2xl font-normal transition-colors mx-auto rounded-full ${
+          amount.includes(".") || hasTwoDecimalPlaces
+            ? "text-gray-300 cursor-not-allowed"
+            : "text-black hover:bg-gray-50"
+        }`}
       >
         •
       </button>
       <button
         onClick={() => handleNumberInput("0")}
-        className="w-16 h-14 flex items-center justify-center text-2xl font-normal text-black hover:bg-gray-50 transition-colors mx-auto rounded-full"
+        disabled={hasTwoDecimalPlaces}
+        className={`w-16 h-14 flex items-center justify-center text-2xl font-normal transition-colors mx-auto rounded-full ${
+          hasTwoDecimalPlaces
+            ? "text-gray-300 cursor-not-allowed"
+            : "text-black hover:bg-gray-50"
+        }`}
       >
         0
       </button>
       <button
         onClick={() => handleNumberInput("backspace")}
-        className="w-16 h-14 rounded-full flex items-center justify-center hover:bg-gray-800 transition-colors mx-auto"
+        className="w-16 h-14 rounded-full flex items-center justify-center hover:bg-gray-100 transition-colors mx-auto"
       >
-        <BackspaceIcon size={20} weight="fill" />
+        <BackspaceIcon size={20} weight="fill" className="text-gray-600" />
       </button>
     </div>
   );

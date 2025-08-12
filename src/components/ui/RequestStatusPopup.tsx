@@ -15,6 +15,7 @@ interface RequestStatusPopupProps {
   amount: string;
   selectedToken: string;
   username: string;
+  profileImage?: string;
 }
 
 export default function RequestStatusPopup({
@@ -24,6 +25,7 @@ export default function RequestStatusPopup({
   amount,
   selectedToken,
   username,
+  profileImage,
 }: RequestStatusPopupProps) {
   if (!isOpen) return null;
 
@@ -102,9 +104,17 @@ export default function RequestStatusPopup({
             <span className="text-gray-500 mr-3 text-sm font-medium">
               From:
             </span>
-            <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center mr-2">
-              <span className="text-white text-xs">👤</span>
-            </div>
+            {profileImage ? (
+              <img
+                src={profileImage}
+                alt={username}
+                className="w-6 h-6 rounded-full mr-2 object-cover"
+              />
+            ) : (
+              <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center mr-2">
+                <span className="text-white text-xs">👤</span>
+              </div>
+            )}
             <span className="text-gray-500 text-sm">@{username}</span>
             <button className="ml-2 text-gray-400 hover:text-gray-600">
               <XCircleIcon size={16} weight="fill" />

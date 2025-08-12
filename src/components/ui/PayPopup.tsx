@@ -1,14 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   CaretCircleDownIcon,
   CaretCircleUpIcon,
   PaperPlaneTiltIcon,
   XCircleIcon,
 } from "@phosphor-icons/react";
+import {
+  useAccount,
+  useSendTransaction,
+  useWaitForTransactionReceipt,
+  usePublicClient,
+} from "wagmi";
+import { encodeFunctionData } from "viem";
 import NumberPad from "./NumberPad";
 import { formatAmount } from "../../lib/utils";
+import {
+  useFarcasterUserSearch,
+  type FarcasterUser,
+} from "../../hooks/useFarcasterUserSearch";
+import {
+  getTokensForChain,
+  getTokenInfo,
+  getGatewayAddress,
+  type TokenInfo,
+} from "../../lib/tokens";
+import { useTokenApproval } from "../../hooks/useTokenApproval";
 
 interface PayPopupProps {
   isOpen: boolean;
@@ -29,26 +47,244 @@ export default function PayPopup({
 }: PayPopupProps) {
   const [showRecipientDropdown, setShowRecipientDropdown] = useState(false);
   const [showTokenDropdown, setShowTokenDropdown] = useState(false);
-  const [selectedRecipient, setSelectedRecipient] = useState("");
-  const [recipientSearch, setRecipientSearch] = useState("");
+  const [selectedRecipient, setSelectedRecipient] =
+    useState<FarcasterUser | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isApprovalStep, setIsApprovalStep] = useState(false);
 
-  // Sample recipient suggestions
-  const recipientSuggestions = [
-    { name: "Sarvagna", address: "0x1234...5678", avatar: "🧑‍💼" },
-    { name: "qimchi", address: "0xabcd...efgh", avatar: "👩‍💻" },
-    { name: "Mitesh", address: "0x9876...4321", avatar: "👨‍🎨" },
-  ];
+  // Use the approval hook
+  const {
+    needsApproval,
+    isCheckingApproval,
+    executeApproval,
+    isApproving,
+    error: approvalError,
+    resetApproval,
+  } = useTokenApproval(selectedToken, amount);
 
-  // Sample token options
-  const tokenOptions = [
-    { symbol: "USDC", name: "USD Coin", icon: "💵" },
-    { symbol: "ETH", name: "Ethereum", icon: "⟠" },
-    { symbol: "BTC", name: "Bitcoin", icon: "₿" },
-  ];
+  const { users, isSearching, searchQuery, setSearchQuery, clearSearch } =
+    useFarcasterUserSearch();
 
-  const filteredRecipients = recipientSuggestions.filter((recipient) =>
-    recipient.name.toLowerCase().includes(recipientSearch.toLowerCase())
-  );
+  // Wagmi hooks for transaction handling
+  const { address, isConnected, chainId } = useAccount();
+  const publicClient = usePublicClient();
+  const {
+    sendTransaction,
+    data: transactionHash,
+    error: transactionError,
+    isError: isTransactionError,
+    isPending: isTransactionPending,
+  } = useSendTransaction();
+
+  const {
+    isLoading: isTransactionConfirming,
+    isSuccess: isTransactionConfirmed,
+  } = useWaitForTransactionReceipt({
+    hash: transactionHash,
+  });
+
+  // Get tokens for the current chain (dynamic based on selected chain)
+  const tokenOptions = React.useMemo(() => {
+    return chainId
+      ? getTokensForChain(chainId).map((token) => ({
+          symbol: token.symbol,
+          name: token.name,
+          icon: token.icon,
+        }))
+      : [];
+  }, [chainId]);
+
+  const filteredRecipients = users;
+
+  // Ensure selected token is valid for current chain
+  React.useEffect(() => {
+    if (chainId && tokenOptions.length > 0) {
+      const isValidToken = tokenOptions.some(
+        (token) => token.symbol === selectedToken
+      );
+      if (!isValidToken) {
+        // Select the first available token for this chain
+        onTokenChange(tokenOptions[0].symbol);
+      }
+    }
+  }, [chainId, tokenOptions, selectedToken, onTokenChange]);
+
+  // Reset approval status when transaction is confirmed
+  React.useEffect(() => {
+    if (isTransactionConfirmed) {
+      if (isApprovalStep) {
+        // If this was an approval transaction, proceed to execute the bridge transaction
+        setIsApprovalStep(false);
+        setTimeout(() => {
+          executeBridgeTransaction();
+        }, 2000); // Wait a bit for blockchain state to update
+      } else {
+        // If this was a bridge transaction, reset everything
+        resetApproval();
+        setSelectedRecipient(null);
+        clearSearch();
+        onAmountChange("0");
+        onClose();
+      }
+    }
+  }, [isTransactionConfirmed, isApprovalStep]);
+
+  // Handle transaction errors or cancellation
+  React.useEffect(() => {
+    if (isTransactionError) {
+      console.error("Transaction failed or was cancelled:", transactionError);
+
+      // Reset processing states
+      setIsProcessing(false);
+      setIsApprovalStep(false);
+
+      // Set error message
+      setError(
+        transactionError?.message || "Transaction was cancelled or failed"
+      );
+    }
+  }, [isTransactionError, transactionError]);
+
+  const handleApproval = async () => {
+    setIsApprovalStep(true);
+    setError(null);
+
+    try {
+      await executeApproval();
+    } catch (err) {
+      console.error("=== APPROVAL FAILED ===");
+      console.error("Error details:", err);
+      setError(err instanceof Error ? err.message : "Approval failed");
+      setIsApprovalStep(false);
+    }
+  };
+
+  const executeBridgeTransaction = async () => {
+    if (!selectedRecipient || !amount || !isConnected || !address || !chainId) {
+      setError("Please select a recipient and ensure wallet is connected");
+      return;
+    }
+
+    // Additional wallet and chain validation
+    if (!publicClient) {
+      setError("Wallet client not available");
+      return;
+    }
+
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      // Call the simplified bridge API
+      const response = await fetch("/api/getSwapData", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          receiverFid: selectedRecipient.fid.toString(),
+          amount: amount,
+          sourceChainId: chainId,
+          sourceTokenSymbol: selectedToken,
+          sourceAddress: address,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || "Failed to generate bridge transaction");
+      }
+
+      // Check for the correct response format
+      const bridgeTransaction = data.bridgeTransaction?.transaction;
+
+      if (
+        !bridgeTransaction ||
+        !bridgeTransaction.to ||
+        !bridgeTransaction.data
+      ) {
+        throw new Error("Invalid bridge transaction data received from API");
+      }
+
+      // Validate transaction parameters
+      if (
+        !bridgeTransaction.to.startsWith("0x") ||
+        bridgeTransaction.to.length !== 42
+      ) {
+        throw new Error("Invalid transaction destination address");
+      }
+
+      if (!bridgeTransaction.data.startsWith("0x")) {
+        throw new Error("Invalid transaction data format");
+      }
+
+      // Additional validation
+      if (bridgeTransaction.data.length < 10) {
+        throw new Error("Transaction data too short");
+      }
+
+      // Estimate gas before sending transaction
+      try {
+        const gasEstimate = await publicClient.estimateGas({
+          account: address,
+          to: bridgeTransaction.to as `0x${string}`,
+          data: bridgeTransaction.data as `0x${string}`,
+        });
+      } catch (gasError) {
+        console.error("=== GAS ESTIMATION FAILED ===");
+        console.error("Gas error:", gasError);
+        throw new Error(
+          `Gas estimation failed: ${
+            gasError instanceof Error ? gasError.message : "Unknown error"
+          }`
+        );
+      }
+
+      // Execute the bridge transaction using wagmi
+      sendTransaction({
+        to: bridgeTransaction.to as `0x${string}`,
+        data: bridgeTransaction.data as `0x${string}`,
+      });
+    } catch (err) {
+      console.error("=== BRIDGE TRANSACTION FAILED ===");
+      console.error("Error details:", err);
+      setError(
+        err instanceof Error ? err.message : "Bridge transaction failed"
+      );
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handlePay = async () => {
+    if (!selectedRecipient || !amount || !isConnected || !address || !chainId) {
+      setError("Please select a recipient and ensure wallet is connected");
+      return;
+    }
+
+    // If approval is needed, handle approval first
+    if (needsApproval) {
+      await handleApproval();
+      return;
+    }
+
+    // If no approval needed, execute bridge transaction directly
+    await executeBridgeTransaction();
+  };
+
+  // Reset states when popup closes
+  const handleClose = () => {
+    setError(null);
+    setIsProcessing(false);
+    setIsApprovalStep(false);
+    resetApproval();
+    setSelectedRecipient(null);
+    clearSearch();
+    onAmountChange("0");
+    onClose();
+  };
 
   if (!isOpen) return null;
 
@@ -61,7 +297,7 @@ export default function PayPopup({
           // Close dropdowns when clicking overlay
           setShowRecipientDropdown(false);
           setShowTokenDropdown(false);
-          onClose();
+          handleClose();
         }}
       />
 
@@ -85,7 +321,7 @@ export default function PayPopup({
             <span className="text-xl font-semibold text-black">Pay</span>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
           >
             <svg
@@ -120,26 +356,28 @@ export default function PayPopup({
                 <input
                   type="text"
                   placeholder="Search recipients..."
-                  value={selectedRecipient || recipientSearch}
+                  value={
+                    selectedRecipient ? selectedRecipient.name : searchQuery
+                  }
                   onChange={(e) => {
                     const value = e.target.value;
-                    setRecipientSearch(value);
-                    setSelectedRecipient(""); // Clear selection when typing
+                    setSearchQuery(value);
+                    setSelectedRecipient(null); // Clear selection when typing
                     setShowRecipientDropdown(true);
                   }}
                   onFocus={() => setShowRecipientDropdown(true)}
                   className="bg-transparent text-sm font-medium text-black placeholder-gray-400 focus:outline-none min-w-0"
                   style={{
                     width: selectedRecipient
-                      ? `${selectedRecipient.length * 8 + 8}px`
+                      ? `${selectedRecipient.name.length * 8 + 8}px`
                       : "auto",
                   }}
                 />
                 {selectedRecipient && (
                   <button
                     onClick={() => {
-                      setSelectedRecipient("");
-                      setRecipientSearch("");
+                      setSelectedRecipient(null);
+                      clearSearch();
                       setShowRecipientDropdown(false);
                     }}
                     className="ml-2 text-gray-400 hover:text-gray-600"
@@ -151,46 +389,73 @@ export default function PayPopup({
             </div>
 
             {/* Recipient Dropdown */}
-            {showRecipientDropdown &&
-              (selectedRecipient || recipientSearch) && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-10">
-                  <div className="max-h-32 overflow-y-auto">
-                    {filteredRecipients.map((recipient) => (
+            {showRecipientDropdown && (selectedRecipient || searchQuery) && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-10">
+                <div className="max-h-32 overflow-y-auto">
+                  {isSearching && (
+                    <div className="p-3 text-sm text-gray-500 text-center">
+                      Searching...
+                    </div>
+                  )}
+                  {!isSearching &&
+                    filteredRecipients.map((recipient) => (
                       <button
-                        key={recipient.name}
+                        key={recipient.fid}
                         onClick={() => {
-                          setSelectedRecipient(recipient.name);
-                          setRecipientSearch("");
+                          setSelectedRecipient(recipient);
+                          clearSearch();
                           setShowRecipientDropdown(false);
                         }}
                         className="w-full p-3 text-left hover:bg-gray-50 flex items-center"
                       >
-                        <span className="text-2xl mr-3">
-                          {recipient.avatar}
-                        </span>
+                        {recipient.avatar ? (
+                          <img
+                            src={recipient.avatar}
+                            alt={recipient.name}
+                            className="w-8 h-8 rounded-full mr-3 object-cover"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 bg-gray-300 rounded-full mr-3 flex items-center justify-center">
+                            <span className="text-xs text-gray-600">
+                              {recipient.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                        )}
                         <div>
                           <div className="text-sm font-medium text-black">
                             {recipient.name}
                           </div>
                           <div className="text-xs text-gray-500">
-                            {recipient.address}
+                            @{recipient.username} •{" "}
+                            {recipient.address
+                              ? `${recipient.address.slice(
+                                  0,
+                                  6
+                                )}...${recipient.address.slice(-4)}`
+                              : "No address"}
                           </div>
                         </div>
                       </button>
                     ))}
-                    {filteredRecipients.length === 0 && recipientSearch && (
+                  {!isSearching &&
+                    filteredRecipients.length === 0 &&
+                    searchQuery && (
                       <div className="p-3 text-sm text-gray-500 text-center">
-                        No recipients found
+                        No users found
                       </div>
                     )}
-                  </div>
                 </div>
-              )}
+              </div>
+            )}
           </div>
 
           {/* Amount Display */}
           <div className="text-center py-2">
-            <div className="text-5xl font-light text-black">
+            <div
+              className={`text-5xl font-light transition-colors ${
+                parseFloat(amount) === 0 ? "text-gray-400" : "text-black"
+              }`}
+            >
               ${formatAmount(amount)}
             </div>
           </div>
@@ -263,9 +528,49 @@ export default function PayPopup({
           {/* Number Pad */}
           <NumberPad amount={amount} onAmountChange={onAmountChange} />
 
+          {/* Error Display */}
+          {(error || approvalError) && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-red-600 text-sm">{error || approvalError}</p>
+            </div>
+          )}
+
+          {/* Transaction Status */}
+          {isProcessing && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-blue-600 text-sm">Processing transaction...</p>
+            </div>
+          )}
+
           {/* Pay Button */}
-          <button className="w-full bg-orange-500 text-white py-3 rounded-xl font-semibold text-lg hover:bg-orange-600 transition-colors mt-4">
-            Pay
+          <button
+            className={`w-full py-3 rounded-xl font-semibold text-lg transition-colors mt-4 ${
+              !isConnected ||
+              !selectedRecipient ||
+              isProcessing ||
+              isApproving ||
+              parseFloat(amount) === 0
+                ? "bg-orange-200 text-orange-400 cursor-not-allowed"
+                : "bg-orange-500 text-white hover:bg-orange-600"
+            }`}
+            onClick={handlePay}
+            disabled={
+              !isConnected ||
+              !selectedRecipient ||
+              isProcessing ||
+              isApproving ||
+              parseFloat(amount) === 0
+            }
+          >
+            {isCheckingApproval
+              ? "Checking..."
+              : isProcessing || isApproving
+              ? isApprovalStep
+                ? "Approving..."
+                : "Processing..."
+              : needsApproval
+              ? "Approve & Pay"
+              : "Pay"}
           </button>
         </div>
       </div>

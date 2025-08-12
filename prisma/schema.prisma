@@ -46,6 +46,7 @@ enum Token {
   MOVE
   POL
   SEI
+  SOL
 }
 
 model User {

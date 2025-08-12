@@ -39,6 +39,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^16.4.7",
+    "gasyard-sdk": "^1.0.10",
     "lucide-react": "^0.469.0",
     "mipd": "^0.0.7",
     "next": "^15",

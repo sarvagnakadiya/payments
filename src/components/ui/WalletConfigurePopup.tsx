@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   CaretCircleDownIcon,
   CaretCircleUpIcon,
@@ -8,6 +8,12 @@ import {
   GearIcon,
 } from "@phosphor-icons/react";
 import { truncateAddress } from "../../lib/truncateAddress";
+import {
+  getSupportedChainIds,
+  getChainInfo,
+  getTokensForChain,
+  type TokenInfo,
+} from "../../lib/tokens";
 
 interface WalletConfigurePopupProps {
   isOpen: boolean;
@@ -16,6 +22,8 @@ interface WalletConfigurePopupProps {
   profileImage?: string;
   evmAddress?: string;
   solanaAddress?: string;
+  userId?: string;
+  onPreferencesUpdated?: () => void;
 }
 
 export default function WalletConfigurePopup({
@@ -23,58 +31,140 @@ export default function WalletConfigurePopup({
   onClose,
   username = "qimchi",
   profileImage,
-  evmAddress = "0x524...5FB2",
-  solanaAddress = "4zd...VUx",
+  evmAddress,
+  solanaAddress,
+  userId,
+  onPreferencesUpdated,
 }: WalletConfigurePopupProps) {
-  const [selectedChain, setSelectedChain] = useState<"solana" | "eth">(
-    "solana"
-  );
-  const [selectedToken, setSelectedToken] = useState<"usdc" | "usdt">("usdc");
+  const [selectedChainId, setSelectedChainId] = useState<number>(8453); // Default to Base
+  const [selectedTokenSymbol, setSelectedTokenSymbol] =
+    useState<string>("USDC");
   const [showChainDropdown, setShowChainDropdown] = useState(false);
   const [showTokenDropdown, setShowTokenDropdown] = useState(false);
   const [selectedOtherWallet, setSelectedOtherWallet] = useState<string | null>(
     null
   );
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Chain options
-  const chainOptions = [
-    { id: "solana", name: "Solana", icon: "S", color: "bg-purple-500" },
-    {
-      id: "eth",
-      name: "Ethereum",
-      icon: "E",
-      color: "bg-gradient-to-r from-purple-500 via-blue-500 to-green-500",
-    },
-  ];
+  // Get all supported chains and their tokens
+  const supportedChainIds = getSupportedChainIds();
+  const selectedChainInfo = getChainInfo(selectedChainId);
+  const selectedChainTokens = getTokensForChain(selectedChainId);
+  const selectedTokenInfo = selectedChainTokens.find(
+    (t) => t.symbol === selectedTokenSymbol
+  );
 
-  // Token options
-  const tokenOptions = [
-    {
-      id: "usdc",
-      symbol: "USDC",
-      name: "USD Coin",
-      icon: "$",
-      color: "bg-blue-500",
-    },
-    {
-      id: "usdt",
-      symbol: "USDT",
-      name: "Tether",
-      icon: "₮",
-      color: "bg-green-500",
-    },
-  ];
+  // Load user preferences when component mounts or userId changes
+  const loadUserPreferences = React.useCallback(async () => {
+    if (!userId) return;
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/users/${userId}`);
+      if (response.ok) {
+        const userData = await response.json();
+        if (userData.user) {
+          // Convert enum values back to chain ID and token symbol
+          const chainId = getChainIdFromEnum(userData.user.preferredChain);
+          const tokenSymbol = getTokenSymbolFromEnum(
+            userData.user.preferredToken
+          );
+
+          if (chainId) setSelectedChainId(chainId);
+          if (tokenSymbol) setSelectedTokenSymbol(tokenSymbol);
+        }
+      }
+    } catch (error) {
+      console.error("Error loading user preferences:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    if (userId) {
+      loadUserPreferences();
+    }
+  }, [userId, loadUserPreferences]);
+
+  // Helper functions to convert enum values back to chain ID and token symbol
+  const getChainIdFromEnum = (chainEnum: string): number | null => {
+    const enumToChainId: Record<string, number> = {
+      ETHEREUM: 1,
+      BASE: 8453,
+      BNB: 56,
+      ARBITRUM: 42161,
+      HYPERLIQUID: 42162,
+      MOVEMENT: 30732,
+      SOLANA: 1329,
+      SEI: 1330,
+      POLYGON: 137,
+    };
+    return enumToChainId[chainEnum] || null;
+  };
+
+  const getTokenSymbolFromEnum = (tokenEnum: string): string | null => {
+    const enumToTokenSymbol: Record<string, string> = {
+      ETH: "ETH",
+      USDC: "USDC",
+      BSC_USD: "BSC-USD",
+      USDT: "USDT",
+      BNB: "BNB",
+      MOVE: "MOVE",
+      POL: "POL",
+      SEI: "SEI",
+    };
+    return enumToTokenSymbol[tokenEnum] || null;
+  };
+
+  // Chain options with colors and icons
+  const chainOptions = supportedChainIds.map((chainId) => {
+    const chain = getChainInfo(chainId);
+    const chainColors = {
+      1: "bg-gradient-to-r from-purple-500 via-blue-500 to-green-500", // Ethereum
+      8453: "bg-gradient-to-r from-blue-500 to-purple-500", // Base
+      10: "bg-gradient-to-r from-red-500 to-orange-500", // Optimism
+      666666666: "bg-gradient-to-r from-purple-500 to-pink-500", // Degen
+      111111111: "bg-gradient-to-r from-pink-500 to-purple-500", // Unichain
+      42220: "bg-gradient-to-r from-green-500 to-yellow-500", // Celo
+    };
+
+    const chainIcons = {
+      1: "⟠", // Ethereum
+      8453: "🔵", // Base
+      10: "🔴", // Optimism
+      666666666: "🎲", // Degen
+      111111111: "🦄", // Unichain
+      42220: "🌱", // Celo
+    };
+
+    return {
+      id: chainId,
+      name: chain?.name || "Unknown",
+      icon: chainIcons[chainId as keyof typeof chainIcons] || "🔗",
+      color: chainColors[chainId as keyof typeof chainColors] || "bg-gray-500",
+    };
+  });
 
   if (!isOpen) return null;
 
-  const handleChainSelect = (chain: "solana" | "eth") => {
-    setSelectedChain(chain);
+  const handleChainSelect = (chainId: number) => {
+    setSelectedChainId(chainId);
+    // Reset token to first available token for the selected chain
+    const tokens = getTokensForChain(chainId);
+    if (tokens.length > 0) {
+      setSelectedTokenSymbol(tokens[0].symbol);
+    }
     setShowChainDropdown(false);
+    setHasChanges(true);
   };
 
-  const handleTokenSelect = (token: "usdc" | "usdt") => {
-    setSelectedToken(token);
+  const handleTokenSelect = (tokenSymbol: string) => {
+    setSelectedTokenSymbol(tokenSymbol);
     setShowTokenDropdown(false);
+    setHasChanges(true);
   };
 
   const handleOtherWalletSelect = (walletType: string) => {
@@ -83,8 +173,45 @@ export default function WalletConfigurePopup({
     );
   };
 
-  const selectedChainData = chainOptions.find((c) => c.id === selectedChain);
-  const selectedTokenData = tokenOptions.find((t) => t.id === selectedToken);
+  const handleSaveSettings = async () => {
+    if (!userId) {
+      console.error("No user ID provided");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const response = await fetch("/api/users/preferences", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId,
+          preferredChainId: selectedChainId,
+          preferredTokenSymbol: selectedTokenSymbol,
+          preferredAddress: evmAddress, // Use EVM address as preferred address
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update preferences");
+      }
+
+      const result = await response.json();
+      console.log("Preferences updated:", result);
+
+      setHasChanges(false);
+      onPreferencesUpdated?.();
+
+      // Show success feedback (you can add a toast notification here)
+    } catch (error) {
+      console.error("Error updating preferences:", error);
+      // Show error feedback (you can add a toast notification here)
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center">
@@ -158,138 +285,147 @@ export default function WalletConfigurePopup({
             <h3 className="font-bold text-black mb-3">Preferred Settlement</h3>
 
             {/* Chain and Token Selection */}
-            <div className="flex gap-2">
-              {/* Chain Selector */}
-              <div className="relative flex-1">
-                <button
-                  onClick={() => setShowChainDropdown(!showChainDropdown)}
-                  className="w-full flex items-center justify-between p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-center">
-                    <div
-                      className={`w-6 h-6 ${selectedChainData?.color} rounded-full flex items-center justify-center mr-3`}
-                    >
-                      <span className="text-white text-xs font-bold">
-                        {selectedChainData?.icon}
+            {isLoading ? (
+              <div className="flex gap-2">
+                <div className="flex-1 h-10 bg-gray-100 rounded-lg animate-pulse"></div>
+                <div className="flex-1 h-10 bg-gray-100 rounded-lg animate-pulse"></div>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                {/* Chain Selector */}
+                <div className="relative flex-1">
+                  <button
+                    onClick={() => setShowChainDropdown(!showChainDropdown)}
+                    className="w-full flex items-center justify-between p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center">
+                      <div
+                        className={`w-6 h-6 ${
+                          chainOptions.find((c) => c.id === selectedChainId)
+                            ?.color
+                        } rounded-full flex items-center justify-center mr-3`}
+                      >
+                        <span className="text-white text-xs font-bold">
+                          {
+                            chainOptions.find((c) => c.id === selectedChainId)
+                              ?.icon
+                          }
+                        </span>
+                      </div>
+                      <span className="font-medium text-black">
+                        {selectedChainInfo?.name}
                       </span>
                     </div>
-                    <span className="font-medium text-black">
-                      {selectedChainData?.name}
-                    </span>
-                  </div>
-                  {showChainDropdown ? (
-                    <CaretCircleUpIcon
-                      size={18}
-                      weight="fill"
-                      className="text-gray-400"
-                    />
-                  ) : (
-                    <CaretCircleDownIcon
-                      size={18}
-                      weight="fill"
-                      className="text-gray-400"
-                    />
-                  )}
-                </button>
+                    {showChainDropdown ? (
+                      <CaretCircleUpIcon
+                        size={18}
+                        weight="fill"
+                        className="text-gray-400"
+                      />
+                    ) : (
+                      <CaretCircleDownIcon
+                        size={18}
+                        weight="fill"
+                        className="text-gray-400"
+                      />
+                    )}
+                  </button>
 
-                {/* Chain Dropdown */}
-                {showChainDropdown && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-10">
-                    <div className="max-h-32 overflow-y-auto">
-                      {chainOptions.map((chain) => (
-                        <button
-                          key={chain.id}
-                          onClick={() =>
-                            handleChainSelect(chain.id as "solana" | "eth")
-                          }
-                          className="w-full p-2 text-left hover:bg-gray-50 flex items-center"
-                        >
-                          <div
-                            className={`w-6 h-6 ${chain.color} rounded-full flex items-center justify-center mr-3`}
+                  {/* Chain Dropdown */}
+                  {showChainDropdown && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-10">
+                      <div className="max-h-48 overflow-y-auto">
+                        {chainOptions.map((chain) => (
+                          <button
+                            key={chain.id}
+                            onClick={() => handleChainSelect(chain.id)}
+                            className="w-full p-2 text-left hover:bg-gray-50 flex items-center"
                           >
-                            <span className="text-white text-xs font-bold">
-                              {chain.icon}
-                            </span>
-                          </div>
-                          <div>
-                            <div className="text-sm font-medium text-black">
-                              {chain.name}
+                            <div
+                              className={`w-6 h-6 ${chain.color} rounded-full flex items-center justify-center mr-3`}
+                            >
+                              <span className="text-white text-xs font-bold">
+                                {chain.icon}
+                              </span>
                             </div>
-                          </div>
-                        </button>
-                      ))}
+                            <div>
+                              <div className="text-sm font-medium text-black">
+                                {chain.name}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {getTokensForChain(chain.id).length} tokens
+                                available
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
 
-              {/* Token Selector */}
-              <div className="relative flex-1">
-                <button
-                  onClick={() => setShowTokenDropdown(!showTokenDropdown)}
-                  className="w-full flex items-center justify-between p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-center">
-                    <div
-                      className={`w-6 h-6 ${selectedTokenData?.color} rounded-full flex items-center justify-center mr-3`}
-                    >
-                      <span className="text-white text-xs font-bold">
-                        {selectedTokenData?.icon}
+                {/* Token Selector */}
+                <div className="relative flex-1">
+                  <button
+                    onClick={() => setShowTokenDropdown(!showTokenDropdown)}
+                    className="w-full flex items-center justify-between p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center">
+                      <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
+                        <span className="text-white text-xs font-bold">
+                          {selectedTokenInfo?.icon || "$"}
+                        </span>
+                      </div>
+                      <span className="font-medium text-black">
+                        {selectedTokenInfo?.symbol || "Select Token"}
                       </span>
                     </div>
-                    <span className="font-medium text-black">
-                      {selectedTokenData?.symbol}
-                    </span>
-                  </div>
-                  {showTokenDropdown ? (
-                    <CaretCircleUpIcon
-                      size={18}
-                      weight="fill"
-                      className="text-gray-400"
-                    />
-                  ) : (
-                    <CaretCircleDownIcon
-                      size={18}
-                      weight="fill"
-                      className="text-gray-400"
-                    />
-                  )}
-                </button>
+                    {showTokenDropdown ? (
+                      <CaretCircleUpIcon
+                        size={18}
+                        weight="fill"
+                        className="text-gray-400"
+                      />
+                    ) : (
+                      <CaretCircleDownIcon
+                        size={18}
+                        weight="fill"
+                        className="text-gray-400"
+                      />
+                    )}
+                  </button>
 
-                {/* Token Dropdown */}
-                {showTokenDropdown && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-10">
-                    <div className="max-h-32 overflow-y-auto">
-                      {tokenOptions.map((token) => (
-                        <button
-                          key={token.id}
-                          onClick={() =>
-                            handleTokenSelect(token.id as "usdc" | "usdt")
-                          }
-                          className="w-full p-2 text-left hover:bg-gray-50 flex items-center"
-                        >
-                          <div
-                            className={`w-6 h-6 ${token.color} rounded-full flex items-center justify-center mr-3`}
+                  {/* Token Dropdown */}
+                  {showTokenDropdown && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-10">
+                      <div className="max-h-48 overflow-y-auto">
+                        {selectedChainTokens.map((token) => (
+                          <button
+                            key={token.symbol}
+                            onClick={() => handleTokenSelect(token.symbol)}
+                            className="w-full p-2 text-left hover:bg-gray-50 flex items-center"
                           >
-                            <span className="text-white text-xs font-bold">
-                              {token.icon}
-                            </span>
-                          </div>
-                          <div>
-                            <div className="text-sm font-medium text-black">
-                              {token.symbol}
+                            <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
+                              <span className="text-white text-xs font-bold">
+                                {token.icon}
+                              </span>
                             </div>
-                            <div className="text-xs text-gray-500">
-                              {token.name}
+                            <div>
+                              <div className="text-sm font-medium text-black">
+                                {token.symbol}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {token.name}
+                              </div>
                             </div>
-                          </div>
-                        </button>
-                      ))}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Primary Wallet Section */}
@@ -305,7 +441,9 @@ export default function WalletConfigurePopup({
                   <div>
                     <span className="font-medium text-black">EVM</span>
                     <span className="text-gray-500 ml-2">
-                      {truncateAddress(evmAddress)}
+                      {evmAddress
+                        ? truncateAddress(evmAddress)
+                        : "Not connected"}
                     </span>
                   </div>
                 </div>
@@ -321,7 +459,9 @@ export default function WalletConfigurePopup({
                   <div>
                     <span className="font-medium text-black">Solana</span>
                     <span className="text-gray-500 ml-2">
-                      {truncateAddress(solanaAddress)}
+                      {solanaAddress
+                        ? truncateAddress(solanaAddress)
+                        : "Not connected"}
                     </span>
                   </div>
                 </div>
@@ -346,7 +486,9 @@ export default function WalletConfigurePopup({
                   <div>
                     <span className="font-medium text-black">EVM</span>
                     <span className="text-gray-500 ml-2">
-                      {truncateAddress(evmAddress)}
+                      {evmAddress
+                        ? truncateAddress(evmAddress)
+                        : "Not connected"}
                     </span>
                   </div>
                 </div>
@@ -375,7 +517,9 @@ export default function WalletConfigurePopup({
                   <div>
                     <span className="font-medium text-black">Solana</span>
                     <span className="text-gray-500 ml-2">
-                      {truncateAddress(solanaAddress)}
+                      {solanaAddress
+                        ? truncateAddress(solanaAddress)
+                        : "Not connected"}
                     </span>
                   </div>
                 </div>
@@ -399,12 +543,18 @@ export default function WalletConfigurePopup({
         </div>
       </div>
 
-      {/* Floating Add Wallets Button */}
-      <div className="fixed bottom-4 left-4 right-4 z-50">
-        <button className="w-full bg-black text-white py-2 px-6 rounded-lg font-medium hover:bg-gray-800 transition-colors shadow-lg">
-          Add Wallets
-        </button>
-      </div>
+      {/* Floating Save Settings Button */}
+      {hasChanges && (
+        <div className="fixed bottom-4 left-4 right-4 z-50">
+          <button
+            onClick={handleSaveSettings}
+            disabled={isSaving}
+            className="w-full bg-black text-white py-2 px-6 rounded-lg font-medium hover:bg-gray-800 transition-colors shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {isSaving ? "Saving..." : "Save Settings"}
+          </button>
+        </div>
+      )}
 
       {/* CSS Animation */}
       <style jsx>{`

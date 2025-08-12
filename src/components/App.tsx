@@ -8,11 +8,18 @@ import {
   useDisconnect,
   useBalance,
   useChainId,
+  useSendTransaction,
+  useWaitForTransactionReceipt,
+  usePublicClient,
 } from "wagmi";
 import { useWallet as useSolanaWallet } from "@solana/wallet-adapter-react";
-import { truncateAddress } from "../lib/truncateAddress";
-import { USE_WALLET, USDC_ADDRESSES, USDT_ADDRESSES } from "~/lib/constants";
+import { USE_WALLET } from "~/lib/constants";
+import { getTokenAddress, checkTokenApprovalNeeded } from "~/lib/tokenUtils";
+import { getTokenInfo, getGatewayAddress } from "~/lib/tokens";
+import { encodeFunctionData } from "viem";
 import { useNeynarUser } from "../hooks/useNeynarUser";
+import { useFundRequests } from "../hooks/useFundRequests";
+
 import ActionSheet from "./ui/ActionSheet";
 import PayPopup from "./ui/PayPopup";
 import RequestPopup from "./ui/RequestPopup";
@@ -57,8 +64,17 @@ export default function App(
   const [showRequestPopup, setShowRequestPopup] = useState(false);
   const [showWalletConfigurePopup, setShowWalletConfigurePopup] =
     useState(false);
-  const [amount, setAmount] = useState("0.00");
+  const [amount, setAmount] = useState("0");
   const [selectedToken, setSelectedToken] = useState("USDC");
+  const [currentUserId, setCurrentUserId] = useState<string | undefined>();
+
+  // Payment flow state
+  const [paymentStep, setPaymentStep] = useState<"approval" | "payment" | null>(
+    null
+  );
+  const [currentPayingRequest, setCurrentPayingRequest] = useState<any>(null);
+  const [transactionTimeout, setTransactionTimeout] =
+    useState<NodeJS.Timeout | null>(null);
 
   // --- Hooks ---
   const { isSDKLoaded, context, added, actions } = useMiniApp();
@@ -70,6 +86,138 @@ export default function App(
 
   // --- Neynar user hook ---
   const { user: neynarUser } = useNeynarUser(context || undefined);
+
+  // --- Fund requests hook ---
+  const {
+    fundRequests,
+    isLoading: requestsLoading,
+    updateRequestStatus,
+    refetch: refetchRequests,
+  } = useFundRequests(currentUserId, "received");
+  const [payingRequestId, setPayingRequestId] = useState<string | null>(null);
+  const [denyingRequestId, setDenyingRequestId] = useState<string | null>(null);
+
+  // Transaction hooks
+  const publicClient = usePublicClient();
+  const {
+    sendTransaction,
+    data: transactionHash,
+    error: transactionError,
+    isError: isTransactionError,
+    isPending: isTransactionPending,
+  } = useSendTransaction();
+
+  const {
+    isLoading: isTransactionConfirming,
+    isSuccess: isTransactionConfirmed,
+  } = useWaitForTransactionReceipt({
+    hash: transactionHash,
+  });
+
+  // We'll manage approval state manually for fund requests to avoid confusion with PayPopup usage
+
+  // Store user data when Farcaster context is available
+  useEffect(() => {
+    if (context?.user?.fid && context?.user?.username) {
+      const storeUserData = async () => {
+        try {
+          const response = await fetch("/api/users", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              fid: context.user.fid,
+              username: context.user.username,
+              usernameSource: "FARCASTER",
+            }),
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            console.log("User data stored successfully:", result);
+            // Store the user ID for later use
+            if (result.user?.id) {
+              setCurrentUserId(result.user.id);
+            }
+          } else {
+            console.error("Failed to store user data:", response.statusText);
+          }
+        } catch (error) {
+          console.error("Error storing user data:", error);
+        }
+      };
+
+      storeUserData();
+    }
+  }, [context?.user?.fid, context?.user?.username]);
+
+  // Handle transaction confirmation
+  useEffect(() => {
+    if (isTransactionConfirmed && currentPayingRequest && paymentStep) {
+      // Clear timeout since transaction was successful
+      if (transactionTimeout) {
+        clearTimeout(transactionTimeout);
+        setTransactionTimeout(null);
+      }
+
+      if (paymentStep === "approval") {
+        // Approval transaction confirmed, now execute payment
+        setPaymentStep("payment");
+        setTimeout(() => {
+          executePaymentTransaction();
+        }, 2000);
+      } else if (paymentStep === "payment") {
+        // Payment transaction confirmed, update request status
+        updateRequestStatus(currentPayingRequest.id, "ACCEPTED");
+        setCurrentPayingRequest(null);
+        setPaymentStep(null);
+        setPayingRequestId(null);
+      }
+    }
+  }, [
+    isTransactionConfirmed,
+    currentPayingRequest,
+    paymentStep,
+    updateRequestStatus,
+    transactionTimeout,
+  ]);
+
+  // Handle transaction errors or cancellation
+  useEffect(() => {
+    if (isTransactionError && currentPayingRequest && paymentStep) {
+      console.error("Transaction failed or was cancelled:", transactionError);
+
+      // Clear any existing timeout
+      if (transactionTimeout) {
+        clearTimeout(transactionTimeout);
+        setTransactionTimeout(null);
+      }
+
+      // Reset payment state
+      setCurrentPayingRequest(null);
+      setPaymentStep(null);
+      setPayingRequestId(null);
+
+      // You could show an error message here if needed
+      console.log("Payment process cancelled or failed");
+    }
+  }, [
+    isTransactionError,
+    transactionError,
+    currentPayingRequest,
+    paymentStep,
+    transactionTimeout,
+  ]);
+
+  // Clean up timeout when component unmounts or request changes
+  useEffect(() => {
+    return () => {
+      if (transactionTimeout) {
+        clearTimeout(transactionTimeout);
+      }
+    };
+  }, [transactionTimeout]);
 
   // Auto-add mini app if not added
   useEffect(() => {
@@ -92,7 +240,7 @@ export default function App(
 
       return () => clearTimeout(timer);
     }
-  }, [context, actions.addMiniApp, added]);
+  }, [context, actions.addMiniApp, added, actions]);
 
   // --- Wallet hooks ---
   const { address: evmAddress, isConnected: isEvmConnected } = useAccount();
@@ -106,8 +254,8 @@ export default function App(
   const isWalletConnected = isEvmConnected || !!solanaPublicKey;
 
   // --- Balance hooks ---
-  const usdcAddress = USDC_ADDRESSES[chainId as keyof typeof USDC_ADDRESSES];
-  const usdtAddress = USDT_ADDRESSES[chainId as keyof typeof USDT_ADDRESSES];
+  const usdcAddress = getTokenAddress(chainId, "USDC") as `0x${string}`;
+  const usdtAddress = getTokenAddress(chainId, "USDT") as `0x${string}`;
 
   const { data: usdcBalance, isLoading: usdcLoading } = useBalance({
     address: evmAddress as `0x${string}`,
@@ -138,6 +286,187 @@ export default function App(
   const formatBalance = (balance: any) => {
     if (!balance) return "0.0";
     return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(1);
+  };
+
+  // Payment functions
+
+  const executePaymentTransaction = async () => {
+    if (!currentPayingRequest || !evmAddress || !chainId) {
+      console.error("Missing required data for payment");
+      return;
+    }
+
+    try {
+      // Call the getSwapData API
+      const response = await fetch("/api/getSwapData", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          receiverFid: currentPayingRequest.sender.fid,
+          amount: currentPayingRequest.amount.toString(),
+          sourceChainId: chainId,
+          sourceTokenSymbol: currentPayingRequest.overrideToken || "USDC",
+          sourceAddress: evmAddress,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || "Failed to generate bridge transaction");
+      }
+
+      const bridgeTransaction = data.bridgeTransaction?.transaction;
+
+      if (
+        !bridgeTransaction ||
+        !bridgeTransaction.to ||
+        !bridgeTransaction.data
+      ) {
+        throw new Error("Invalid bridge transaction data received from API");
+      }
+
+      // Set a timeout for payment transaction as well
+      const timeout = setTimeout(() => {
+        console.log("Payment transaction timed out");
+        setCurrentPayingRequest(null);
+        setPaymentStep(null);
+        setPayingRequestId(null);
+        setTransactionTimeout(null);
+      }, 5 * 60 * 1000);
+
+      setTransactionTimeout(timeout);
+
+      // Execute the bridge transaction
+      sendTransaction({
+        to: bridgeTransaction.to as `0x${string}`,
+        data: bridgeTransaction.data as `0x${string}`,
+      });
+    } catch (err) {
+      console.error("Payment failed:", err);
+      setPayingRequestId(null);
+      setCurrentPayingRequest(null);
+      setPaymentStep(null);
+    }
+  };
+
+  const handlePayRequest = async (request: any) => {
+    setPayingRequestId(request.id);
+    setCurrentPayingRequest(request);
+
+    if (!evmAddress || !chainId || !publicClient) {
+      console.error("Missing required data for payment");
+      setPayingRequestId(null);
+      setCurrentPayingRequest(null);
+      return;
+    }
+
+    try {
+      const tokenSymbol = request.overrideToken || "USDC";
+      const amount = request.amount.toString();
+
+      console.log("=== CHECKING APPROVAL FOR FUND REQUEST ===");
+      console.log("Request details:", {
+        requestId: request.id,
+        amount: amount,
+        tokenSymbol: tokenSymbol,
+        senderUsername: request.sender.username,
+      });
+
+      // Check if approval is needed for this specific amount
+      const approvalCheck = await checkTokenApprovalNeeded(
+        publicClient,
+        chainId,
+        tokenSymbol,
+        evmAddress,
+        amount
+      );
+
+      console.log("Approval check result:", approvalCheck);
+
+      if (approvalCheck.needsApproval) {
+        setPaymentStep("approval");
+        await executeApprovalForRequest(request, approvalCheck.requiredAmount);
+      } else {
+        setPaymentStep("payment");
+        await executePaymentTransaction();
+      }
+    } catch (error) {
+      console.error("Failed to check approval for fund request:", error);
+      setPayingRequestId(null);
+      setCurrentPayingRequest(null);
+    }
+  };
+
+  const executeApprovalForRequest = async (
+    request: any,
+    requiredAmount: bigint
+  ) => {
+    if (!evmAddress || !chainId) {
+      console.error("Missing required data for approval");
+      return;
+    }
+
+    try {
+      const tokenSymbol = request.overrideToken || "USDC";
+      const tokenInfo = getTokenInfo(chainId, tokenSymbol);
+      if (!tokenInfo) {
+        throw new Error(`Token ${tokenSymbol} not found on chain ${chainId}`);
+      }
+
+      const gatewayAddress = getGatewayAddress(chainId);
+      if (gatewayAddress === "Native Integration") {
+        throw new Error("No approval needed for native integration");
+      }
+
+      // Create approval transaction data
+      const approvalData = encodeFunctionData({
+        abi: [
+          {
+            inputs: [
+              { name: "spender", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+            name: "approve",
+            outputs: [{ name: "", type: "bool" }],
+            stateMutability: "nonpayable",
+            type: "function",
+          },
+        ],
+        functionName: "approve",
+        args: [gatewayAddress as `0x${string}`, requiredAmount],
+      });
+
+      console.log("=== EXECUTING APPROVAL FOR FUND REQUEST ===");
+      console.log("Token:", tokenInfo.address);
+      console.log("Gateway:", gatewayAddress);
+      console.log("Required Amount:", requiredAmount.toString());
+      console.log("Request Amount:", request.amount);
+
+      // Set a timeout to reset state if transaction takes too long (5 minutes)
+      const timeout = setTimeout(() => {
+        console.log("Approval transaction timed out");
+        setCurrentPayingRequest(null);
+        setPaymentStep(null);
+        setPayingRequestId(null);
+        setTransactionTimeout(null);
+      }, 5 * 60 * 1000);
+
+      setTransactionTimeout(timeout);
+
+      sendTransaction({
+        to: tokenInfo.address as `0x${string}`,
+        data: approvalData,
+      });
+    } catch (err) {
+      console.error("=== APPROVAL FAILED FOR FUND REQUEST ===");
+      console.error("Error details:", err);
+      setPayingRequestId(null);
+      setCurrentPayingRequest(null);
+      setPaymentStep(null);
+    }
   };
 
   // --- Early Returns ---
@@ -185,26 +514,6 @@ export default function App(
 
         {/* Wallet selection on right */}
         <div className="flex items-center space-x-2">
-          {/* Add Mini App Button - for debugging */}
-          {!added && (
-            <button
-              onClick={() => {
-                console.log("Manual addMiniApp triggered");
-                actions
-                  .addMiniApp()
-                  .then(() => {
-                    console.log("Manual addMiniApp completed");
-                  })
-                  .catch((error) => {
-                    console.error("Manual addMiniApp failed:", error);
-                  });
-              }}
-              className="bg-blue-500 text-white px-3 py-2 rounded-full text-sm font-medium hover:bg-blue-600 transition-colors"
-            >
-              Add App
-            </button>
-          )}
-
           <button
             onClick={() => setShowWalletConfigurePopup(true)}
             className="flex items-center space-x-2 bg-white px-3 py-2 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors"
@@ -335,57 +644,126 @@ export default function App(
 
             {/* Activities Section */}
             <div className="mt-6">
-              {/* <div className="bg-white rounded-2xl shadow-sm"> */}
-              <h2 className="font-semibold text-black">Activities</h2>
-              {/* Card header */}
-              {/* <div className="flex bg-gray-200 rounded-2xl items-center p-2">
-                  <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                    <div className="w-2 h-2 bg-blue-200 rounded-full"></div>
-                  </div>
-                </div> */}
+              <h2 className="font-semibold text-black mb-4">Activities</h2>
 
-              <div className="bg-white rounded-2xl p-4 shadow-sm">
-                {/* Activity Item */}
-                <div className="flex items-start space-x-3">
-                  {/* Avatar */}
-                  <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0">
-                    <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center">
-                      <div className="w-2 h-2 bg-white rounded-full"></div>
-                    </div>
-                  </div>
-
-                  {/* Activity Content */}
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2 mb-1">
-                      <span className="text-sm text-gray-500">@sarvagna</span>
-                      <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
-                        <BoxArrowDownIcon
-                          size={10}
-                          weight="fill"
-                          className="text-white"
-                        />
-                      </div>
-                      <span className="text-sm text-black">
-                        requested payment of
-                      </span>
-                    </div>
-
-                    <div className="text-lg font-bold text-black mb-3">
-                      $1000.<span className="text-gray-400">00</span>
-                    </div>
-
-                    {/* Action Buttons */}
-                    <div className="flex space-x-2">
-                      <button className="flex-1 bg-orange-500 text-white py-2 px-4 rounded-lg font-medium hover:bg-orange-600 transition-colors">
-                        Pay
-                      </button>
-                      <button className="flex-1 bg-gray-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-gray-700 transition-colors">
-                        Deny
-                      </button>
-                    </div>
+              {requestsLoading ? (
+                <div className="bg-white rounded-2xl p-4 shadow-sm">
+                  <div className="flex items-center justify-center py-8">
+                    <div className="spinner h-6 w-6"></div>
+                    <span className="ml-2 text-gray-600">
+                      Loading requests...
+                    </span>
                   </div>
                 </div>
-              </div>
+              ) : fundRequests.length === 0 ? (
+                <div className="bg-white rounded-2xl p-4 shadow-sm">
+                  <div className="text-center py-8">
+                    <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <BoxArrowDownIcon size={24} className="text-gray-400" />
+                    </div>
+                    <p className="text-gray-500">No pending requests</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {fundRequests
+                    .filter((request) => request.status === "PENDING")
+                    .map((request) => (
+                      <div
+                        key={request.id}
+                        className="bg-white rounded-2xl p-4 shadow-sm"
+                      >
+                        <div className="flex items-start space-x-3">
+                          {/* Avatar */}
+                          <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0">
+                            <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center">
+                              <div className="w-2 h-2 bg-white rounded-full"></div>
+                            </div>
+                          </div>
+
+                          {/* Activity Content */}
+                          <div className="flex-1">
+                            <div className="flex items-center space-x-2 mb-1">
+                              <span className="text-sm text-gray-500">
+                                @{request.sender.username}
+                              </span>
+                              <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+                                <BoxArrowDownIcon
+                                  size={10}
+                                  weight="fill"
+                                  className="text-white"
+                                />
+                              </div>
+                              <span className="text-sm text-black">
+                                requested payment of
+                              </span>
+                            </div>
+
+                            <div className="text-lg font-bold text-black mb-3">
+                              ${Number(request.amount).toFixed(2)}
+                              {request.overrideToken && (
+                                <span className="text-sm text-gray-500 ml-2">
+                                  in {request.overrideToken}
+                                </span>
+                              )}
+                            </div>
+
+                            {request.note && (
+                              <div className="text-sm text-gray-600 mb-3">
+                                &ldquo;{request.note}&rdquo;
+                              </div>
+                            )}
+
+                            {/* Action Buttons */}
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => handlePayRequest(request)}
+                                disabled={
+                                  payingRequestId === request.id ||
+                                  denyingRequestId === request.id
+                                }
+                                className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
+                                  payingRequestId === request.id
+                                    ? "bg-orange-300 text-white cursor-not-allowed"
+                                    : "bg-orange-500 text-white hover:bg-orange-600"
+                                }`}
+                              >
+                                {payingRequestId === request.id
+                                  ? paymentStep === "approval"
+                                    ? "Approving..."
+                                    : "Processing..."
+                                  : "Pay"}
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  setDenyingRequestId(request.id);
+                                  await updateRequestStatus(
+                                    request.id,
+                                    "REJECTED"
+                                  );
+                                  setDenyingRequestId(null);
+                                }}
+                                disabled={
+                                  payingRequestId === request.id ||
+                                  denyingRequestId === request.id
+                                }
+                                className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
+                                  denyingRequestId === request.id
+                                    ? "bg-gray-400 text-white cursor-not-allowed"
+                                    : "bg-gray-600 text-white hover:bg-gray-700"
+                                }`}
+                              >
+                                {denyingRequestId === request.id
+                                  ? "Processing..."
+                                  : "Deny"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -481,11 +859,16 @@ export default function App(
 
       <RequestPopup
         isOpen={showRequestPopup}
-        onClose={() => setShowRequestPopup(false)}
+        onClose={() => {
+          setShowRequestPopup(false);
+          // Refresh requests when popup is closed
+          refetchRequests();
+        }}
         amount={amount}
         selectedToken={selectedToken}
         onAmountChange={setAmount}
         onTokenChange={setSelectedToken}
+        currentUserId={currentUserId}
       />
 
       <WalletConfigurePopup
@@ -493,12 +876,13 @@ export default function App(
         onClose={() => setShowWalletConfigurePopup(false)}
         username={context?.user?.username}
         profileImage={context?.user?.pfpUrl}
-        evmAddress={evmAddress ? truncateAddress(evmAddress) : undefined}
-        solanaAddress={
-          solanaPublicKey
-            ? truncateAddress(solanaPublicKey.toString())
-            : undefined
-        }
+        evmAddress={evmAddress}
+        solanaAddress={solanaPublicKey?.toString()}
+        userId={currentUserId}
+        onPreferencesUpdated={() => {
+          console.log("Preferences updated successfully");
+          // You can add additional logic here, like refreshing user data
+        }}
       />
     </div>
   );

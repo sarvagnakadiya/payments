@@ -83,44 +83,11 @@ export const APP_ACCOUNT_ASSOCIATION: AccountAssociation | undefined =
  */
 export const APP_BUTTON_TEXT = "open";
 
-// --- Token Addresses ---
+// --- Token Configuration ---
 /**
- * USDC token addresses for supported chains.
- * Used for balance fetching and token transfers.
+ * Token and chain configuration is now managed in the separate tokens.ts file.
+ * Import from '../lib/tokens' for token and chain information.
  */
-export const USDC_ADDRESSES = {
-  // Base
-  8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`,
-  // Optimism
-  10: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" as `0x${string}`,
-  // Mainnet
-  1: "0xA0b86a33E6441b8C4C8C0C4C8C0C4C8C0C4C8C0C" as `0x${string}`,
-  // Degen
-  666666666: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff" as `0x${string}`,
-  // Unichain
-  111111111: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff" as `0x${string}`,
-  // Celo
-  42220: "0x765DE816845861e75A25fCA122bb6898B8B1282a" as `0x${string}`,
-} as const;
-
-/**
- * USDT token addresses for supported chains.
- * Used for balance fetching and token transfers.
- */
-export const USDT_ADDRESSES = {
-  // Base
-  8453: "0xf1e92B13697CCfe1d0E652b970859f038132b8f3" as `0x${string}`,
-  // Optimism
-  10: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58" as `0x${string}`,
-  // Mainnet
-  1: "0xdAC17F958D2ee523a2206206994597C13D831ec7" as `0x${string}`,
-  // Degen
-  666666666: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff" as `0x${string}`,
-  // Unichain
-  111111111: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff" as `0x${string}`,
-  // Celo
-  42220: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e" as `0x${string}`,
-} as const;
 
 // --- Integration Configuration ---
 /**
