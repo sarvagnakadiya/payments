@@ -110,9 +110,8 @@ export default function QRCodePopup({
     }
 
     return () => {
-      const currentQrRef = qrRef.current;
-      if (currentQrRef && qrCode.current) {
-        currentQrRef.innerHTML = "";
+      if (qrRef.current && qrCode.current) {
+        qrRef.current.innerHTML = "";
         qrCode.current = null;
       }
     };

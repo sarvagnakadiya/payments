@@ -110,26 +110,6 @@ export default function PayPopup({
     }
   }, [chainId, tokenOptions, selectedToken, onTokenChange]);
 
-  // Reset approval status when transaction is confirmed
-  React.useEffect(() => {
-    if (isTransactionConfirmed) {
-      if (isApprovalStep) {
-        // If this was an approval transaction, proceed to execute the bridge transaction
-        setIsApprovalStep(false);
-        setTimeout(() => {
-          executeBridgeTransaction();
-        }, 2000); // Wait a bit for blockchain state to update
-      } else {
-        // If this was a bridge transaction, reset everything
-        resetApproval();
-        setSelectedRecipient(null);
-        clearSearch();
-        onAmountChange("0");
-        onClose();
-      }
-    }
-  }, [isTransactionConfirmed, isApprovalStep]);
-
   // Handle transaction errors or cancellation
   React.useEffect(() => {
     if (isTransactionError) {
@@ -147,11 +127,13 @@ export default function PayPopup({
   }, [isTransactionError, transactionError]);
 
   const handleApproval = async () => {
-    setIsApprovalStep(true);
+    console.log("=== HANDLE APPROVAL CALLED ===");
     setError(null);
 
     try {
+      console.log("=== EXECUTING APPROVAL ===");
       await executeApproval();
+      console.log("=== APPROVAL EXECUTION COMPLETED ===");
     } catch (err) {
       console.error("=== APPROVAL FAILED ===");
       console.error("Error details:", err);
@@ -160,22 +142,42 @@ export default function PayPopup({
     }
   };
 
-  const executeBridgeTransaction = async () => {
+  const executeBridgeTransaction = React.useCallback(async () => {
+    console.log("=== EXECUTE BRIDGE TRANSACTION CALLED ===");
+    console.log("selectedRecipient:", selectedRecipient);
+    console.log("amount:", amount);
+    console.log("isConnected:", isConnected);
+    console.log("address:", address);
+    console.log("chainId:", chainId);
+    console.log("publicClient:", !!publicClient);
+
     if (!selectedRecipient || !amount || !isConnected || !address || !chainId) {
+      console.log("=== BRIDGE TRANSACTION VALIDATION FAILED ===");
       setError("Please select a recipient and ensure wallet is connected");
       return;
     }
 
     // Additional wallet and chain validation
     if (!publicClient) {
+      console.log("=== PUBLIC CLIENT NOT AVAILABLE ===");
       setError("Wallet client not available");
       return;
     }
 
+    console.log("=== STARTING BRIDGE TRANSACTION PROCESS ===");
     setIsProcessing(true);
     setError(null);
 
     try {
+      console.log("=== CALLING BRIDGE API ===");
+      console.log("API payload:", {
+        receiverFid: selectedRecipient.fid.toString(),
+        amount: amount,
+        sourceChainId: chainId,
+        sourceTokenSymbol: selectedToken,
+        sourceAddress: address,
+      });
+
       // Call the simplified bridge API
       const response = await fetch("/api/getSwapData", {
         method: "POST",
@@ -192,19 +194,26 @@ export default function PayPopup({
       });
 
       const data = await response.json();
+      console.log("=== BRIDGE API RESPONSE ===");
+      console.log("Response data:", data);
 
       if (!data.success) {
+        console.log("=== BRIDGE API FAILED ===");
+        console.log("Error:", data.error);
         throw new Error(data.error || "Failed to generate bridge transaction");
       }
 
       // Check for the correct response format
       const bridgeTransaction = data.bridgeTransaction?.transaction;
+      console.log("=== BRIDGE TRANSACTION DATA ===");
+      console.log("bridgeTransaction:", bridgeTransaction);
 
       if (
         !bridgeTransaction ||
         !bridgeTransaction.to ||
         !bridgeTransaction.data
       ) {
+        console.log("=== INVALID BRIDGE TRANSACTION DATA ===");
         throw new Error("Invalid bridge transaction data received from API");
       }
 
@@ -242,11 +251,17 @@ export default function PayPopup({
         );
       }
 
+      console.log("=== SENDING BRIDGE TRANSACTION ===");
+      console.log("Transaction to:", bridgeTransaction.to);
+      console.log("Transaction data:", bridgeTransaction.data);
+
       // Execute the bridge transaction using wagmi
       sendTransaction({
         to: bridgeTransaction.to as `0x${string}`,
         data: bridgeTransaction.data as `0x${string}`,
       });
+
+      console.log("=== BRIDGE TRANSACTION SENT ===");
     } catch (err) {
       console.error("=== BRIDGE TRANSACTION FAILED ===");
       console.error("Error details:", err);
@@ -256,20 +271,105 @@ export default function PayPopup({
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, [
+    selectedRecipient,
+    amount,
+    isConnected,
+    address,
+    chainId,
+    publicClient,
+    selectedToken,
+    sendTransaction,
+  ]);
+
+  // Reset approval status when transaction is confirmed
+  React.useEffect(() => {
+    if (isTransactionConfirmed) {
+      console.log("=== TRANSACTION CONFIRMED ===");
+      console.log("isApprovalStep:", isApprovalStep);
+      console.log("Transaction hash:", transactionHash);
+
+      if (isApprovalStep) {
+        console.log(
+          "=== APPROVAL TRANSACTION CONFIRMED - PROCEEDING TO PAY ==="
+        );
+        // If this was an approval transaction, proceed to execute the bridge transaction
+        setIsApprovalStep(false);
+        // Execute bridge transaction immediately after approval
+        executeBridgeTransaction();
+      } else {
+        console.log("=== PAY TRANSACTION CONFIRMED - RESETTING POPUP ===");
+        // If this was a bridge transaction, reset everything
+        resetApproval();
+        setSelectedRecipient(null);
+        clearSearch();
+        onAmountChange("0");
+        onClose();
+      }
+    }
+  }, [
+    isTransactionConfirmed,
+    isApprovalStep,
+    executeBridgeTransaction,
+    transactionHash,
+    resetApproval,
+    setSelectedRecipient,
+    clearSearch,
+    onAmountChange,
+    onClose,
+  ]);
+
+  // Monitor approval status changes and auto-proceed to payment when approval is no longer needed
+  React.useEffect(() => {
+    console.log("=== APPROVAL STATUS MONITOR ===");
+    console.log("isApprovalStep:", isApprovalStep);
+    console.log("needsApproval:", needsApproval);
+    console.log("isApproving:", isApproving);
+    console.log("isCheckingApproval:", isCheckingApproval);
+
+    if (
+      isApprovalStep &&
+      !needsApproval &&
+      !isApproving &&
+      !isCheckingApproval
+    ) {
+      console.log("=== APPROVAL COMPLETE - AUTO-PROCEEDING TO PAY ===");
+      // Approval is complete, proceed to payment
+      setIsApprovalStep(false);
+      executeBridgeTransaction();
+    }
+  }, [
+    needsApproval,
+    isApprovalStep,
+    isApproving,
+    isCheckingApproval,
+    executeBridgeTransaction,
+  ]);
 
   const handlePay = async () => {
+    console.log("=== HANDLE PAY CALLED ===");
+    console.log("selectedRecipient:", selectedRecipient);
+    console.log("amount:", amount);
+    console.log("isConnected:", isConnected);
+    console.log("address:", address);
+    console.log("chainId:", chainId);
+    console.log("needsApproval:", needsApproval);
+
     if (!selectedRecipient || !amount || !isConnected || !address || !chainId) {
+      console.log("=== PAY VALIDATION FAILED ===");
       setError("Please select a recipient and ensure wallet is connected");
       return;
     }
 
     // If approval is needed, handle approval first
     if (needsApproval) {
+      console.log("=== APPROVAL NEEDED - STARTING APPROVAL PROCESS ===");
+      setIsApprovalStep(true);
       await handleApproval();
       return;
     }
 
+    console.log("=== NO APPROVAL NEEDED - EXECUTING PAY DIRECTLY ===");
     // If no approval needed, execute bridge transaction directly
     await executeBridgeTransaction();
   };

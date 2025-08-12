@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useMiniApp } from "@neynar/react";
 import {
   useAccount,
@@ -290,7 +290,7 @@ export default function App(
 
   // Payment functions
 
-  const executePaymentTransaction = async () => {
+  const executePaymentTransaction = useCallback(async () => {
     if (!currentPayingRequest || !evmAddress || !chainId) {
       console.error("Missing required data for payment");
       return;
@@ -350,7 +350,16 @@ export default function App(
       setCurrentPayingRequest(null);
       setPaymentStep(null);
     }
-  };
+  }, [
+    currentPayingRequest,
+    evmAddress,
+    chainId,
+    sendTransaction,
+    setTransactionTimeout,
+    setPayingRequestId,
+    setCurrentPayingRequest,
+    setPaymentStep,
+  ]);
 
   const handlePayRequest = async (request: any) => {
     setPayingRequestId(request.id);

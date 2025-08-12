@@ -50,22 +50,26 @@ export function useTokenApproval(
 
   const checkApproval = useCallback(async () => {
     if (!address || !chainId || !publicClient) {
+      console.log("=== CHECK APPROVAL - MISSING DATA ===");
+      console.log("address:", !!address);
+      console.log("chainId:", chainId);
+      console.log("publicClient:", !!publicClient);
       setNeedsApproval(false);
       return;
     }
+
+    console.log("=== CHECKING TOKEN APPROVAL ===");
+    console.log("Input parameters:", {
+      chainId,
+      selectedToken,
+      amount,
+      address,
+    });
 
     setIsCheckingApproval(true);
     setError(null);
 
     try {
-      console.log("=== CHECKING TOKEN APPROVAL ===");
-      console.log("Input parameters:", {
-        chainId,
-        selectedToken,
-        amount,
-        address,
-      });
-
       const result = await checkTokenApprovalNeeded(
         publicClient,
         chainId,
@@ -74,7 +78,9 @@ export function useTokenApproval(
         amount
       );
 
-      console.log("Approval result:", result);
+      console.log("=== APPROVAL CHECK RESULT ===");
+      console.log("needsApproval:", result.needsApproval);
+      console.log("requiredAmount:", result.requiredAmount?.toString());
 
       setNeedsApproval(result.needsApproval);
       if (result.needsApproval) {
@@ -198,14 +204,15 @@ export function useTokenApproval(
   // Re-check approval status after transaction is confirmed
   useEffect(() => {
     if (isTransactionConfirmed && isApproving) {
-      console.log("=== APPROVAL TRANSACTION CONFIRMED ===");
+      console.log(
+        "=== APPROVAL TRANSACTION CONFIRMED - RE-CHECKING APPROVAL ==="
+      );
+      console.log("Transaction hash:", transactionHash);
       setIsApproving(false);
-      // Re-check approval status after a short delay to allow blockchain state to update
-      setTimeout(() => {
-        checkApproval();
-      }, 2000);
+      // Immediately re-check approval status
+      checkApproval();
     }
-  }, [isTransactionConfirmed, isApproving, checkApproval]);
+  }, [isTransactionConfirmed, isApproving, checkApproval, transactionHash]);
 
   return {
     needsApproval,
