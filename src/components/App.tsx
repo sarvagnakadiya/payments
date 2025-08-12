@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useMiniApp } from "@neynar/react";
 import {
   useAccount,
@@ -74,16 +74,14 @@ export default function App(
     null
   );
   const [currentPayingRequest, setCurrentPayingRequest] = useState<any>(null);
-  const [transactionTimeout, setTransactionTimeout] =
-    useState<NodeJS.Timeout | null>(null);
+  const transactionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   // --- Hooks ---
   const { isSDKLoaded, context, added, actions } = useMiniApp();
 
-  console.log("context", context);
-  console.log("isSDKLoaded", isSDKLoaded);
-  console.log("added", added);
-  console.log("actions", actions);
+  // Removed verbose debug logging effects to avoid unnecessary renders
 
   // --- Neynar user hook ---
   const { user: neynarUser } = useNeynarUser(context || undefined);
@@ -119,7 +117,7 @@ export default function App(
 
   // Store user data and fetch all required data when Farcaster context is available
   useEffect(() => {
-    if (context?.user?.fid) {
+    if (context?.user?.fid && !isDataLoaded) {
       const initializeApp = async () => {
         try {
           console.log("Initializing app with data fetching...");
@@ -175,46 +173,15 @@ export default function App(
     }
   }, [context?.user?.fid, context?.user?.username, isDataLoaded]);
 
-  // Handle transaction confirmation
-  useEffect(() => {
-    if (isTransactionConfirmed && currentPayingRequest && paymentStep) {
-      // Clear timeout since transaction was successful
-      if (transactionTimeout) {
-        clearTimeout(transactionTimeout);
-        setTransactionTimeout(null);
-      }
-
-      if (paymentStep === "approval") {
-        // Approval transaction confirmed, now execute payment
-        setPaymentStep("payment");
-        setTimeout(() => {
-          executePaymentTransaction();
-        }, 2000);
-      } else if (paymentStep === "payment") {
-        // Payment transaction confirmed, update request status
-        updateRequestStatus(currentPayingRequest.id, "ACCEPTED");
-        setCurrentPayingRequest(null);
-        setPaymentStep(null);
-        setPayingRequestId(null);
-      }
-    }
-  }, [
-    isTransactionConfirmed,
-    currentPayingRequest,
-    paymentStep,
-    updateRequestStatus,
-    transactionTimeout,
-  ]);
-
   // Handle transaction errors or cancellation
   useEffect(() => {
     if (isTransactionError && currentPayingRequest && paymentStep) {
       console.error("Transaction failed or was cancelled:", transactionError);
 
       // Clear any existing timeout
-      if (transactionTimeout) {
-        clearTimeout(transactionTimeout);
-        setTransactionTimeout(null);
+      if (transactionTimeoutRef.current) {
+        clearTimeout(transactionTimeoutRef.current);
+        transactionTimeoutRef.current = null;
       }
 
       // Reset payment state
@@ -225,30 +192,20 @@ export default function App(
       // You could show an error message here if needed
       console.log("Payment process cancelled or failed");
     }
-  }, [
-    isTransactionError,
-    transactionError,
-    currentPayingRequest,
-    paymentStep,
-    transactionTimeout,
-  ]);
+  }, [isTransactionError, transactionError, currentPayingRequest, paymentStep]);
 
-  // Clean up timeout when component unmounts or request changes
+  // Clean up timeout on unmount
   useEffect(() => {
     return () => {
-      if (transactionTimeout) {
-        clearTimeout(transactionTimeout);
+      if (transactionTimeoutRef.current) {
+        clearTimeout(transactionTimeoutRef.current);
       }
     };
-  }, [transactionTimeout]);
+  }, []);
 
   // Auto-add mini app if not added
   useEffect(() => {
     if (context && !added) {
-      console.log("Attempting to add mini app...");
-      console.log("Context:", context);
-      console.log("Added status:", added);
-
       // Add a small delay to ensure everything is loaded
       const timer = setTimeout(() => {
         actions
@@ -263,7 +220,7 @@ export default function App(
 
       return () => clearTimeout(timer);
     }
-  }, [context, actions.addMiniApp, added, actions]);
+  }, [context, added, actions]);
 
   // --- Wallet hooks ---
   const { address: evmAddress, isConnected: isEvmConnected } = useAccount();
@@ -288,8 +245,6 @@ export default function App(
     },
   });
 
-  console.log("usdcBalance", usdcBalance);
-
   const { data: usdtBalance, isLoading: usdtLoading } = useBalance({
     address: evmAddress as `0x${string}`,
     token: usdtAddress,
@@ -298,7 +253,7 @@ export default function App(
     },
   });
 
-  console.log("usdtBalance", usdtBalance);
+  // Removed verbose balance logging effects
 
   // Calculate total balance
   const totalBalance =
@@ -315,6 +270,9 @@ export default function App(
 
   const executePaymentTransaction = useCallback(async () => {
     console.log("calling execute payyyy---------");
+    console.log("currentPayingRequest", currentPayingRequest);
+    console.log("evmAddress", evmAddress);
+    console.log("chainId", chainId);
     if (!currentPayingRequest || !evmAddress || !chainId) {
       console.log("Missing required data for payment");
       return;
@@ -358,10 +316,10 @@ export default function App(
         setCurrentPayingRequest(null);
         setPaymentStep(null);
         setPayingRequestId(null);
-        setTransactionTimeout(null);
+        transactionTimeoutRef.current = null;
       }, 5 * 60 * 1000);
 
-      setTransactionTimeout(timeout);
+      transactionTimeoutRef.current = timeout;
 
       // Execute the bridge transaction
       sendTransaction({
@@ -374,15 +332,37 @@ export default function App(
       setCurrentPayingRequest(null);
       setPaymentStep(null);
     }
+  }, [currentPayingRequest, evmAddress, chainId, sendTransaction]);
+
+  // Handle transaction confirmation
+  useEffect(() => {
+    if (isTransactionConfirmed && currentPayingRequest && paymentStep) {
+      // Clear timeout since transaction was successful
+      if (transactionTimeoutRef.current) {
+        clearTimeout(transactionTimeoutRef.current);
+        transactionTimeoutRef.current = null;
+      }
+
+      if (paymentStep === "approval") {
+        // Approval transaction confirmed, now execute payment
+        setPaymentStep("payment");
+        setTimeout(() => {
+          executePaymentTransaction();
+        }, 2000);
+      } else if (paymentStep === "payment") {
+        // Payment transaction confirmed, update request status
+        updateRequestStatus(currentPayingRequest.id, "ACCEPTED");
+        setCurrentPayingRequest(null);
+        setPaymentStep(null);
+        setPayingRequestId(null);
+      }
+    }
   }, [
+    isTransactionConfirmed,
     currentPayingRequest,
-    evmAddress,
-    chainId,
-    sendTransaction,
-    setTransactionTimeout,
-    setPayingRequestId,
-    setCurrentPayingRequest,
-    setPaymentStep,
+    paymentStep,
+    updateRequestStatus,
+    executePaymentTransaction,
   ]);
 
   const handlePayRequest = async (request: any) => {
@@ -484,10 +464,10 @@ export default function App(
         setCurrentPayingRequest(null);
         setPaymentStep(null);
         setPayingRequestId(null);
-        setTransactionTimeout(null);
+        transactionTimeoutRef.current = null;
       }, 5 * 60 * 1000);
 
-      setTransactionTimeout(timeout);
+      transactionTimeoutRef.current = timeout;
 
       sendTransaction({
         to: tokenInfo.address as `0x${string}`,
