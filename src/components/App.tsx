@@ -165,6 +165,7 @@ export default function App(
   const publicClient = usePublicClient();
   const {
     sendTransaction,
+    sendTransactionAsync,
     data: transactionHash,
     error: transactionError,
     isError: isTransactionError,
@@ -396,11 +397,12 @@ export default function App(
 
         console.log("bridgeTransaction:", bridgeTransaction);
         console.log("going to send transaction noww");
-        // Execute the bridge transaction
-        sendTransaction({
+        // Execute the bridge transaction and await submission
+        const bridgeHash = await sendTransactionAsync({
           to: bridgeTransaction.to as `0x${string}`,
           data: bridgeTransaction.data as `0x${string}`,
         });
+        console.log("bridge tx hash:", bridgeHash);
       } catch (err) {
         console.error("Payment failed:", err);
         setPayingRequestId(null);
@@ -408,7 +410,7 @@ export default function App(
         setPaymentStep(null);
       }
     },
-    [currentPayingRequest, evmAddress, chainId, sendTransaction]
+    [currentPayingRequest, evmAddress, chainId]
   );
 
   const handlePayRequest = async (request: any) => {
@@ -509,10 +511,14 @@ export default function App(
       console.log("Required Amount:", requiredAmount.toString());
       console.log("Request Amount:", request.amount);
 
-      sendTransaction({
+      // Send approval and wait for on-chain confirmation before proceeding
+      const approvalHash = await sendTransactionAsync({
         to: tokenInfo.address as `0x${string}`,
         data: approvalData,
       });
+      console.log("approval tx hash:", approvalHash);
+      await publicClient!.waitForTransactionReceipt({ hash: approvalHash });
+      console.log("approval confirmed on-chain, proceeding to bridge");
     } catch (err) {
       console.error("=== APPROVAL FAILED FOR FUND REQUEST ===");
       console.error("Error details:", err);
