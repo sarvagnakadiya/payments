@@ -31,6 +31,10 @@ const simplifiedBridgeRequestSchema = z.object({
   sourceChainId: z.number().min(1),
   sourceTokenSymbol: z.string().min(1),
   sourceAddress: z.string().optional(),
+  // Optional overrides coming from a specific fund request
+  overrideChain: z.string().optional(), // Prisma Chain enum string
+  overrideToken: z.string().optional(), // Prisma Token enum string
+  overrideAddress: z.string().optional(),
 });
 
 // Legacy validation schema for bridge request (keeping for backward compatibility)
@@ -122,6 +126,9 @@ async function handleSimplifiedBridgeRequest(data: {
   sourceChainId: number;
   sourceTokenSymbol: string;
   sourceAddress?: string;
+  overrideChain?: string;
+  overrideToken?: string;
+  overrideAddress?: string;
 }) {
   console.log("=== Simplified Bridge Request Processing ===");
   const {
@@ -130,6 +137,9 @@ async function handleSimplifiedBridgeRequest(data: {
     sourceChainId,
     sourceTokenSymbol,
     sourceAddress,
+    overrideChain,
+    overrideToken,
+    overrideAddress,
   } = data;
 
   console.log("Input data:", {
@@ -138,6 +148,9 @@ async function handleSimplifiedBridgeRequest(data: {
     sourceChainId,
     sourceTokenSymbol,
     sourceAddress,
+    overrideChain,
+    overrideToken,
+    overrideAddress,
   });
 
   // Get receiver's preferences
@@ -166,7 +179,9 @@ async function handleSimplifiedBridgeRequest(data: {
     preferredAddressType: typeof receiver.preferredAddress,
   });
 
-  if (!receiver.preferredAddress) {
+  const destinationAddressRaw =
+    overrideAddress ?? receiver.preferredAddress ?? "";
+  if (!destinationAddressRaw) {
     console.log("Receiver has no preferred address set");
     return NextResponse.json(
       { error: "Receiver has no preferred address set" },
@@ -174,14 +189,18 @@ async function handleSimplifiedBridgeRequest(data: {
     );
   }
 
-  // Convert receiver's preferences to chain ID and token symbol
-  const destinationChainId = CHAIN_ENUM_TO_ID[receiver.preferredChain];
-  const destinationTokenSymbol = TOKEN_ENUM_TO_SYMBOL[receiver.preferredToken];
+  // Choose destination preferences with overrides taking precedence
+  const chosenChainEnum = (overrideChain || receiver.preferredChain) as string;
+  const chosenTokenEnum = (overrideToken || receiver.preferredToken) as string;
+
+  // Convert chosen preferences to chain ID and token symbol
+  const destinationChainId = CHAIN_ENUM_TO_ID[chosenChainEnum];
+  const destinationTokenSymbol = TOKEN_ENUM_TO_SYMBOL[chosenTokenEnum];
 
   // Validate address format and length
-  const destinationAddress = receiver.preferredAddress.trim();
+  const destinationAddress = destinationAddressRaw.trim();
   console.log("Address validation:", {
-    originalAddress: receiver.preferredAddress,
+    originalAddress: destinationAddressRaw,
     trimmedAddress: destinationAddress,
     addressLength: destinationAddress.length,
     isEthAddress:
@@ -237,9 +256,9 @@ async function handleSimplifiedBridgeRequest(data: {
   }
 
   console.log("Converted preferences:", {
-    preferredChain: receiver.preferredChain,
+    preferredChain: chosenChainEnum,
     destinationChainId,
-    preferredToken: receiver.preferredToken,
+    preferredToken: chosenTokenEnum,
     destinationTokenSymbol,
   });
 

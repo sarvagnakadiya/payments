@@ -42,24 +42,55 @@ export async function POST(request: Request) {
     }
 
     // Create new user with defaults and inferred preferred address
-    const newUser = await prisma.user.create({
-      data: {
-        fid: fid.toString(),
-        username,
-        usernameSource,
-        preferredChain: "BASE",
-        preferredToken: "USDC",
-        preferredAddress,
-      },
-    });
+    try {
+      const newUser = await prisma.user.create({
+        data: {
+          fid: fid.toString(),
+          username,
+          usernameSource,
+          preferredChain: "BASE",
+          preferredToken: "USDC",
+          preferredAddress,
+        },
+      });
 
-    return NextResponse.json(
-      {
-        message: "User created successfully",
-        user: newUser,
-      },
-      { status: 201 }
-    );
+      return NextResponse.json(
+        {
+          message: "User created successfully",
+          user: newUser,
+        },
+        { status: 201 }
+      );
+    } catch (err: unknown) {
+      // Handle race conditions or duplicates gracefully
+      const isUniqueConstraintViolation =
+        typeof err === "object" &&
+        err !== null &&
+        (err as any).code === "P2002";
+
+      if (isUniqueConstraintViolation) {
+        const existingAfterConflict = await prisma.user.findFirst({
+          where: {
+            OR: [{ fid: fid.toString() }, { username }],
+          },
+        });
+
+        if (existingAfterConflict) {
+          return NextResponse.json({
+            message: "User already exists",
+            user: existingAfterConflict,
+          });
+        }
+
+        // If we cannot find it, return a well-formed error
+        return NextResponse.json(
+          { error: "User already exists but could not be retrieved" },
+          { status: 409 }
+        );
+      }
+
+      throw err;
+    }
   } catch (error) {
     console.error("Failed to create/update user:", error);
     return NextResponse.json(

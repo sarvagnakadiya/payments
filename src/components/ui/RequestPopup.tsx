@@ -24,7 +24,7 @@ interface RequestPopupProps {
   selectedToken: string;
   onAmountChange: (amount: string) => void;
   onTokenChange: (token: string) => void;
-  currentUserId?: string;
+  currentUserFid?: string | number;
 }
 
 export default function RequestPopup({
@@ -34,7 +34,7 @@ export default function RequestPopup({
   selectedToken,
   onAmountChange,
   onTokenChange,
-  currentUserId,
+  currentUserFid,
 }: RequestPopupProps) {
   const [showRecipientDropdown, setShowRecipientDropdown] = useState(false);
   const [showTokenDropdown, setShowTokenDropdown] = useState(false);
@@ -73,14 +73,14 @@ export default function RequestPopup({
 
     setIsSubmitting(true);
     try {
-      const response = await fetch("/api/fund-requests", {
+      const response = await fetch("/api/fund-requests/add", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          senderId: currentUserId || "",
-          receiverUsername: selectedRecipient.username,
+          senderFid: String(currentUserFid || ""),
+          receiverFid: String(selectedRecipient.fid),
           amount: parseFloat(amount),
           overrideChain: null, // Use user's preferred chain
           overrideToken: selectedToken,

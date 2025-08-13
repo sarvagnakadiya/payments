@@ -5,10 +5,10 @@ CREATE TYPE "public"."UsernameSource" AS ENUM ('FARCASTER', 'GASYARD');
 CREATE TYPE "public"."RequestStatus" AS ENUM ('PENDING', 'ACCEPTED', 'REJECTED', 'EXPIRED');
 
 -- CreateEnum
-CREATE TYPE "public"."Chain" AS ENUM ('ETHEREUM', 'BASE', 'BNB', 'ARBITRUM', 'HYPERLIQUID', 'MOVEMENT', 'SOLANA', 'SEI', 'POLYGON');
+CREATE TYPE "public"."Chain" AS ENUM ('ETHEREUM', 'BASE', 'BNB', 'ARBITRUM', 'SOLANA', 'POLYGON');
 
 -- CreateEnum
-CREATE TYPE "public"."Token" AS ENUM ('ETH', 'USDC', 'BSC_USD', 'USDT', 'BNB', 'MOVE', 'POL', 'SEI');
+CREATE TYPE "public"."Token" AS ENUM ('USDC', 'USDT');
 
 -- CreateTable
 CREATE TABLE "public"."User" (

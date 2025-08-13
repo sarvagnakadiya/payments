@@ -4,20 +4,15 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useMiniApp } from "@neynar/react";
 import {
   useAccount,
-  useConnect,
-  useDisconnect,
-  useBalance,
-  useChainId,
   useSendTransaction,
   useWaitForTransactionReceipt,
   usePublicClient,
 } from "wagmi";
 import { useWallet as useSolanaWallet } from "@solana/wallet-adapter-react";
-import { getTokenAddress, checkTokenApprovalNeeded } from "~/lib/tokenUtils";
+import { checkTokenApprovalNeeded } from "~/lib/tokenUtils";
 import { getTokenInfo, getGatewayAddress } from "~/lib/tokens";
 import { encodeFunctionData } from "viem";
 import { useNeynarUser } from "../hooks/useNeynarUser";
-import { useFundRequests } from "../hooks/useFundRequests";
 import { sdk } from "@farcaster/miniapp-sdk";
 
 import ActionSheet from "./ui/ActionSheet";
@@ -76,6 +71,8 @@ export default function App(
   const [currentPayingRequest, setCurrentPayingRequest] = useState<any>(null);
   // Track which transaction hash has already been processed to avoid double-processing
   const lastProcessedHashRef = useRef<string | undefined>(undefined);
+  // Track all processed hashes in this flow to avoid duplicate handling on repeated confirmations
+  const processedHashesRef = useRef<Set<string>>(new Set());
 
   // --- Hooks ---
   const { isSDKLoaded, context, added, actions } = useMiniApp();
@@ -85,13 +82,82 @@ export default function App(
   // --- Neynar user hook ---
   const { user: neynarUser } = useNeynarUser(context || undefined);
 
-  // --- Fund requests hook ---
-  const {
-    fundRequests,
-    isLoading: requestsLoading,
-    updateRequestStatus,
-    refetch: refetchRequests,
-  } = useFundRequests(currentUserId, "received");
+  // --- Fund requests state (API-driven) ---
+  interface FundRequestItem {
+    id: string;
+    senderId: string;
+    receiverId: string;
+    amount: number;
+    overrideChain: string | null;
+    overrideToken: string | null;
+    overrideAddress: string | null;
+    note: string | null;
+    createdAt: string;
+    expiresAt: string | null;
+    status: "PENDING" | "ACCEPTED" | "REJECTED" | "EXPIRED";
+    sender: {
+      id: string;
+      username: string;
+      fid: string | null;
+    };
+    receiver: {
+      id: string;
+      username: string;
+      fid: string | null;
+    };
+  }
+
+  const [fundRequests, setFundRequests] = useState<FundRequestItem[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestsError, setRequestsError] = useState<string | null>(null);
+
+  const fetchFundRequests = useCallback(async () => {
+    if (!context?.user?.fid) return;
+    setRequestsLoading(true);
+    setRequestsError(null);
+    try {
+      const params = new URLSearchParams({
+        fid: String(context.user.fid),
+        type: "received",
+      });
+      const response = await fetch(
+        `/api/fund-requests/get?${params.toString()}`
+      );
+      if (!response.ok) throw new Error("Failed to fetch fund requests");
+      const data = await response.json();
+      setFundRequests(data.fundRequests || []);
+    } catch (err) {
+      setRequestsError(
+        err instanceof Error ? err.message : "An error occurred"
+      );
+    } finally {
+      setRequestsLoading(false);
+    }
+  }, [context?.user?.fid]);
+
+  const updateRequestStatus = useCallback(
+    async (requestId: string, status: FundRequestItem["status"]) => {
+      try {
+        const response = await fetch(
+          `/api/fund-requests/${String(context?.user?.fid)}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ requestId, status }),
+          }
+        );
+        if (!response.ok) throw new Error("Failed to update request status");
+        await fetchFundRequests();
+        return true;
+      } catch (err) {
+        setRequestsError(
+          err instanceof Error ? err.message : "Failed to update request status"
+        );
+        return false;
+      }
+    },
+    [fetchFundRequests, context?.user?.fid]
+  );
   const [payingRequestId, setPayingRequestId] = useState<string | null>(null);
   const [denyingRequestId, setDenyingRequestId] = useState<string | null>(null);
 
@@ -155,7 +221,7 @@ export default function App(
 
           // Step 4: Call sdk.actions.ready() after all data is fetched
           console.log("Calling sdk.actions.ready()...");
-          await sdk.actions.ready();
+          await sdk.actions.ready({});
           console.log("sdk.actions.ready() completed successfully");
         } catch (error) {
           console.error("Error during app initialization:", error);
@@ -167,6 +233,11 @@ export default function App(
       initializeApp();
     }
   }, [context?.user?.fid, context?.user?.username]);
+
+  // Fetch fund requests whenever fid changes
+  useEffect(() => {
+    fetchFundRequests();
+  }, [fetchFundRequests]);
 
   // Handle transaction errors or cancellation
   useEffect(() => {
@@ -180,6 +251,7 @@ export default function App(
 
       // Reset guard
       lastProcessedHashRef.current = undefined;
+      processedHashesRef.current.clear();
 
       // You could show an error message here if needed
       console.log("Payment process cancelled or failed");
@@ -201,146 +273,157 @@ export default function App(
   }, [context, added, actions]);
 
   // --- Wallet hooks ---
-  const { address: evmAddress, isConnected: isEvmConnected } = useAccount();
-  const { connect, connectors } = useConnect();
-  const { disconnect } = useDisconnect();
-  const chainId = useChainId();
+  const {
+    address: evmAddress,
+    isConnected: isEvmConnected,
+    chainId,
+  } = useAccount();
   const solanaWallet = useSolanaWallet();
   const { publicKey: solanaPublicKey } = solanaWallet;
 
   // Check if any wallet is connected
   const isWalletConnected = isEvmConnected || !!solanaPublicKey;
+  // EVM must be ready for paying a fund request
+  const isEvmPaymentReady = Boolean(
+    isEvmConnected && evmAddress && chainId && publicClient
+  );
 
-  // --- Balance hooks ---
-  const usdcAddress = getTokenAddress(chainId, "USDC") as `0x${string}`;
-  const usdtAddress = getTokenAddress(chainId, "USDT") as `0x${string}`;
+  // --- Balances via backend API ---
+  const [balancesLoading, setBalancesLoading] = useState(false);
+  const [totalUsd, setTotalUsd] = useState<number>(0);
+  const [stableTokenBalances, setStableTokenBalances] = useState<{
+    USDC: number;
+    USDT: number;
+  }>({ USDC: 0, USDT: 0 });
 
-  const { data: usdcBalance, isLoading: usdcLoading } = useBalance({
-    address: evmAddress as `0x${string}`,
-    token: usdcAddress,
-    query: {
-      enabled: !!evmAddress && !!usdcAddress,
-    },
-  });
+  const fetchBalances = useCallback(async () => {
+    if (!evmAddress) return;
+    setBalancesLoading(true);
+    try {
+      const res = await fetch(`/api/getBalances?userAddress=${evmAddress}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Failed to fetch balances");
+      const data = await res.json();
+      const assets: Array<{
+        tokenSymbol?: string;
+        balance?: string;
+        balanceUsd?: string | number;
+      }> = data?.walletAssets?.assets || [];
 
-  const { data: usdtBalance, isLoading: usdtLoading } = useBalance({
-    address: evmAddress as `0x${string}`,
-    token: usdtAddress,
-    query: {
-      enabled: !!evmAddress && !!usdtAddress,
-    },
-  });
+      // Aggregate stablecoin balances across chains
+      let usdc = 0;
+      let usdt = 0;
+      for (const asset of assets) {
+        const symbol = (asset.tokenSymbol || "").toUpperCase();
+        const bal = Number(asset.balance || 0);
+        if (symbol === "USDC") usdc += bal;
+        if (symbol === "USDT") usdt += bal;
+      }
+      setStableTokenBalances({ USDC: usdc, USDT: usdt });
+      setTotalUsd(Number(data?.walletAssets?.totalBalanceUsd || 0));
+    } catch (e) {
+      console.error("Failed to load balances:", e);
+      setStableTokenBalances({ USDC: 0, USDT: 0 });
+      setTotalUsd(0);
+    } finally {
+      setBalancesLoading(false);
+    }
+  }, [evmAddress]);
 
-  // Removed verbose balance logging effects
-
-  // Calculate total balance
-  const totalBalance =
-    Number(usdcBalance?.value || 0) / Math.pow(10, usdcBalance?.decimals || 6) +
-    Number(usdtBalance?.value || 0) / Math.pow(10, usdtBalance?.decimals || 6);
-
-  // Helper function to format balance
-  const formatBalance = (balance: any) => {
-    if (!balance) return "0.0";
-    return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(1);
-  };
+  useEffect(() => {
+    if (evmAddress) {
+      fetchBalances();
+    }
+  }, [evmAddress, fetchBalances]);
 
   // Payment functions
-
-  const executePaymentTransaction = useCallback(async () => {
-    console.log("calling execute payyyy---------");
-    console.log("currentPayingRequest", currentPayingRequest);
-    console.log("evmAddress", evmAddress);
-    console.log("chainId", chainId);
-    if (!currentPayingRequest || !evmAddress || !chainId) {
-      console.log("Missing required data for payment");
-      return;
-    }
-
-    try {
-      // Call the getSwapData API
-      const response = await fetch("/api/getSwapData", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          receiverFid: currentPayingRequest.sender.fid,
-          amount: currentPayingRequest.amount.toString(),
-          sourceChainId: chainId,
-          sourceTokenSymbol: currentPayingRequest.overrideToken || "USDC",
-          sourceAddress: evmAddress,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!data.success) {
-        throw new Error(data.error || "Failed to generate bridge transaction");
+  const executePaymentTransaction = useCallback(
+    async (request: any) => {
+      console.log("calling execute payyyy---------");
+      console.log("currentPayingRequest", request);
+      console.log("evmAddress", evmAddress);
+      console.log("chainId", chainId);
+      console.log("going to execute payment transaction");
+      if (!request || !evmAddress || !chainId) {
+        console.log("Missing required data for payment", {
+          hasCurrentPayingRequest: !!request,
+          hasEvmAddress: !!evmAddress,
+          chainId,
+        });
+        return;
       }
 
-      const bridgeTransaction = data.bridgeTransaction?.transaction;
+      try {
+        // Call the getSwapData API
+        console.log("going to get tx data");
 
-      if (
-        !bridgeTransaction ||
-        !bridgeTransaction.to ||
-        !bridgeTransaction.data
-      ) {
-        throw new Error("Invalid bridge transaction data received from API");
-      }
+        const response = await fetch("/api/getSwapData", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            receiverFid: request.sender.fid,
+            amount: request.amount.toString(),
+            sourceChainId: chainId,
+            sourceTokenSymbol: request.overrideToken || "USDC",
+            sourceAddress: evmAddress,
+            // Pass through request-specific overrides so backend can prioritize them
+            overrideChain: request.overrideChain || undefined,
+            overrideToken: request.overrideToken || undefined,
+            overrideAddress: request.overrideAddress || undefined,
+          }),
+        });
 
-      // Execute the bridge transaction
-      sendTransaction({
-        to: bridgeTransaction.to as `0x${string}`,
-        data: bridgeTransaction.data as `0x${string}`,
-      });
-    } catch (err) {
-      console.error("Payment failed:", err);
-      setPayingRequestId(null);
-      setCurrentPayingRequest(null);
-      setPaymentStep(null);
-    }
-  }, [currentPayingRequest, evmAddress, chainId, sendTransaction]);
+        const data = await response.json();
 
-  // Handle transaction confirmation
-  useEffect(() => {
-    if (isTransactionConfirmed && currentPayingRequest && paymentStep) {
-      // Guard to avoid double-processing same hash
-      if (lastProcessedHashRef.current === transactionHash) return;
-      lastProcessedHashRef.current = transactionHash;
+        if (!data.success) {
+          throw new Error(
+            data.error || "Failed to generate bridge transaction"
+          );
+        }
 
-      if (paymentStep === "approval") {
-        // Approval transaction confirmed, now execute payment immediately
-        setPaymentStep("payment");
-        executePaymentTransaction();
-      } else if (paymentStep === "payment") {
-        // Payment transaction confirmed, update request status
-        updateRequestStatus(currentPayingRequest.id, "ACCEPTED");
+        const bridgeTransaction = data.bridgeTransaction?.transaction;
+
+        if (
+          !bridgeTransaction ||
+          !bridgeTransaction.to ||
+          !bridgeTransaction.data
+        ) {
+          throw new Error("Invalid bridge transaction data received from API");
+        }
+
+        console.log("bridgeTransaction:", bridgeTransaction);
+        console.log("going to send transaction noww");
+        // Execute the bridge transaction
+        sendTransaction({
+          to: bridgeTransaction.to as `0x${string}`,
+          data: bridgeTransaction.data as `0x${string}`,
+        });
+      } catch (err) {
+        console.error("Payment failed:", err);
+        setPayingRequestId(null);
         setCurrentPayingRequest(null);
         setPaymentStep(null);
-        setPayingRequestId(null);
-        // Reset guard for next flow
-        lastProcessedHashRef.current = undefined;
       }
-    }
-  }, [
-    isTransactionConfirmed,
-    currentPayingRequest,
-    paymentStep,
-    updateRequestStatus,
-    executePaymentTransaction,
-    transactionHash,
-  ]);
+    },
+    [currentPayingRequest, evmAddress, chainId, sendTransaction]
+  );
 
   const handlePayRequest = async (request: any) => {
-    setPayingRequestId(request.id);
-    setCurrentPayingRequest(request);
-
-    if (!evmAddress || !chainId || !publicClient) {
-      console.error("Missing required data for payment");
-      setPayingRequestId(null);
-      setCurrentPayingRequest(null);
+    if (!isEvmPaymentReady) {
+      console.error("Missing required data for payment", {
+        hasEvmAddress: !!evmAddress,
+        chainId,
+        hasPublicClient: !!publicClient,
+      });
+      setShowWalletConfigurePopup(true);
       return;
     }
+
+    setPayingRequestId(request.id);
+    setCurrentPayingRequest(request);
 
     try {
       const tokenSymbol = request.overrideToken || "USDC";
@@ -356,10 +439,10 @@ export default function App(
 
       // Check if approval is needed for this specific amount
       const approvalCheck = await checkTokenApprovalNeeded(
-        publicClient,
-        chainId,
+        publicClient!,
+        chainId!,
         tokenSymbol,
-        evmAddress,
+        evmAddress!,
         amount
       );
 
@@ -368,10 +451,12 @@ export default function App(
       if (approvalCheck.needsApproval) {
         setPaymentStep("approval");
         await executeApprovalForRequest(request, approvalCheck.requiredAmount);
-      } else {
-        setPaymentStep("payment");
-        await executePaymentTransaction();
+        console.log("approval doneeeeee");
       }
+
+      console.log("payment steppppp");
+      setPaymentStep("payment");
+      await executePaymentTransaction(request);
     } catch (error) {
       console.error("Failed to check approval for fund request:", error);
       setPayingRequestId(null);
@@ -517,37 +602,15 @@ export default function App(
 
       {/* Main Content Section */}
       <div className="px-4 py-6">
-        {isWalletConnected ? (
+        {
           // Connected state - show balances
           <>
             {/* Main balance amount */}
             <div className="text-center mb-4">
               <div className="text-4xl font-bold text-black">
-                ${totalBalance.toFixed(1)}
+                ${balancesLoading ? "0.0" : totalUsd.toFixed(1)}
               </div>
             </div>
-
-            {/* Transaction notification */}
-            {/* <div className="bg-gray-100 rounded-lg px-3 py-2 mb-6 flex items-center justify-between">
-              <span className="text-sm text-gray-600">
-                @{context?.user?.username || "qimchi"} paid +$120
-              </span>
-              <button className="text-gray-400 hover:text-gray-600">
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div> */}
 
             {/* Balance card */}
             <div className="bg-white rounded-2xl shadow-sm">
@@ -573,16 +636,18 @@ export default function App(
                     <div>
                       <div className="font-semibold text-black">USDC</div>
                       <div className="text-sm text-gray-600">
-                        {usdcLoading ? (
+                        {balancesLoading ? (
                           <div className="spinner h-4 w-4"></div>
                         ) : (
-                          formatBalance(usdcBalance)
+                          stableTokenBalances.USDC.toFixed(2)
                         )}
                       </div>
                     </div>
                   </div>
                   <div className="font-semibold text-black">
-                    ${formatBalance(usdcBalance)}
+                    {balancesLoading
+                      ? "$0.00"
+                      : `$${stableTokenBalances.USDC.toFixed(2)}`}
                   </div>
                 </div>
 
@@ -595,16 +660,18 @@ export default function App(
                     <div>
                       <div className="font-semibold text-black">USDT</div>
                       <div className="text-sm text-gray-600">
-                        {usdtLoading ? (
+                        {balancesLoading ? (
                           <div className="spinner h-4 w-4"></div>
                         ) : (
-                          formatBalance(usdtBalance)
+                          stableTokenBalances.USDT.toFixed(2)
                         )}
                       </div>
                     </div>
                   </div>
                   <div className="font-semibold text-black">
-                    ${formatBalance(usdtBalance)}
+                    {balancesLoading
+                      ? "$0.00"
+                      : `$${stableTokenBalances.USDT.toFixed(2)}`}
                   </div>
                 </div>
               </div>
@@ -685,18 +752,29 @@ export default function App(
                             {/* Action Buttons */}
                             <div className="flex space-x-2">
                               <button
-                                onClick={() => handlePayRequest(request)}
+                                onClick={() => {
+                                  if (!isWalletConnected) {
+                                    setShowWalletConfigurePopup(true);
+                                    return;
+                                  }
+                                  handlePayRequest(request);
+                                }}
                                 disabled={
+                                  !isWalletConnected ||
                                   payingRequestId === request.id ||
                                   denyingRequestId === request.id
                                 }
                                 className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-                                  payingRequestId === request.id
+                                  !isWalletConnected
+                                    ? "bg-gray-300 text-white cursor-not-allowed"
+                                    : payingRequestId === request.id
                                     ? "bg-orange-300 text-white cursor-not-allowed"
                                     : "bg-orange-500 text-white hover:bg-orange-600"
                                 }`}
                               >
-                                {payingRequestId === request.id
+                                {!isWalletConnected
+                                  ? "Connect Wallet"
+                                  : payingRequestId === request.id
                                   ? paymentStep === "approval"
                                     ? "Approving..."
                                     : "Processing..."
@@ -734,66 +812,7 @@ export default function App(
               )}
             </div>
           </>
-        ) : (
-          // Not connected state - show connect wallet popup
-          <div className="bg-white rounded-lg p-6 shadow-sm">
-            <div className="text-center">
-              {/* Wallet icon */}
-              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg
-                  className="w-8 h-8 text-gray-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                  />
-                </svg>
-              </div>
-
-              <h2 className="text-xl font-semibold text-black mb-2">
-                Connect Your Wallet
-              </h2>
-              <p className="text-gray-600 mb-6">
-                Connect your wallet to view your balances and start making
-                transactions
-              </p>
-
-              {/* Connection buttons */}
-              <div className="space-y-3">
-                {context ? (
-                  // Farcaster context available - show auto connect
-                  <button
-                    onClick={() => connect({ connector: connectors[0] })}
-                    className="w-full bg-black text-white py-3 px-4 rounded-lg font-medium hover:bg-gray-800 transition-colors"
-                  >
-                    Connect with Farcaster
-                  </button>
-                ) : (
-                  // No Farcaster context - show manual options
-                  <>
-                    <button
-                      onClick={() => connect({ connector: connectors[1] })}
-                      className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors"
-                    >
-                      Connect Coinbase Wallet
-                    </button>
-                    <button
-                      onClick={() => connect({ connector: connectors[2] })}
-                      className="w-full bg-orange-500 text-white py-3 px-4 rounded-lg font-medium hover:bg-orange-600 transition-colors"
-                    >
-                      Connect MetaMask
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        }
       </div>
 
       {/* Floating Action Button - only show when connected */}
@@ -830,13 +849,15 @@ export default function App(
         onClose={() => {
           setShowRequestPopup(false);
           // Refresh requests when popup is closed
-          refetchRequests();
+          fetchFundRequests();
         }}
         amount={amount}
         selectedToken={selectedToken}
         onAmountChange={setAmount}
         onTokenChange={setSelectedToken}
-        currentUserId={currentUserId}
+        currentUserFid={
+          context?.user?.fid ? String(context.user.fid) : undefined
+        }
       />
 
       <WalletConfigurePopup
