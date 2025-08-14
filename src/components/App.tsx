@@ -7,10 +7,11 @@ import {
   useSendTransaction,
   useWaitForTransactionReceipt,
   usePublicClient,
+  useSwitchChain,
 } from "wagmi";
 import { useWallet as useSolanaWallet } from "@solana/wallet-adapter-react";
 import { checkTokenApprovalNeeded } from "~/lib/tokenUtils";
-import { getTokenInfo, getGatewayAddress } from "~/lib/tokens";
+import { getTokenInfo, getGatewayAddress, getChainInfo } from "~/lib/tokens";
 import { encodeFunctionData } from "viem";
 import { useNeynarUser } from "../hooks/useNeynarUser";
 import { sdk } from "@farcaster/miniapp-sdk";
@@ -163,6 +164,7 @@ export default function App(
 
   // Transaction hooks
   const publicClient = usePublicClient();
+  const { switchChainAsync } = useSwitchChain();
   const {
     sendTransaction,
     sendTransactionAsync,
@@ -289,6 +291,11 @@ export default function App(
     isEvmConnected && evmAddress && chainId && publicClient
   );
 
+  // --- UI: current chain display ---
+  const currentChainName = chainId
+    ? getChainInfo(chainId)?.name || `Chain ${chainId}`
+    : "Not connected";
+
   // --- Balances via backend API ---
   const [balancesLoading, setBalancesLoading] = useState(false);
   const [totalUsd, setTotalUsd] = useState<number>(0);
@@ -339,14 +346,45 @@ export default function App(
   }, [evmAddress, fetchBalances]);
 
   // Payment functions
+  // Map external blockchain string to EVM chain id
+  const mapBlockchainToChainId = (blockchain: string): number | null => {
+    const key = blockchain.toLowerCase();
+    if (key === "ethereum" || key === "mainnet") return 1;
+    if (key === "base") return 8453;
+    if (key === "arbitrum") return 42161;
+    if (key === "bsc" || key === "bnb" || key === "bnb chain") return 56;
+    if (key === "polygon" || key === "matic") return 137;
+    return null;
+  };
+
+  const fetchPaymentQuote = async (userAddress: string, amountStr: string) => {
+    const url = `https://api.gasyard.fi/api/sdk/process-payment-quote?userAddress=${encodeURIComponent(
+      userAddress
+    )}&amount=${encodeURIComponent(amountStr)}`;
+    const res = await fetch(url, {
+      headers: { "x-api-key": "trial" },
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error("Failed to fetch payment quote");
+    const data = await res.json();
+    const quote = Array.isArray(data.result) ? data.result[0] : undefined;
+    if (!quote) throw new Error("No quote returned");
+    const targetChainId = mapBlockchainToChainId(quote.blockchain);
+    if (!targetChainId) throw new Error("Unsupported blockchain in quote");
+    return { quote, targetChainId } as const;
+  };
+
   const executePaymentTransaction = useCallback(
-    async (request: any) => {
+    async (
+      request: any,
+      overrides?: { chainId: number; tokenSymbol: string; amount: string }
+    ) => {
       console.log("calling execute payyyy---------");
       console.log("currentPayingRequest", request);
       console.log("evmAddress", evmAddress);
       console.log("chainId", chainId);
       console.log("going to execute payment transaction");
-      if (!request || !evmAddress || !chainId) {
+      if (!request || !evmAddress) {
         console.log("Missing required data for payment", {
           hasCurrentPayingRequest: !!request,
           hasEvmAddress: !!evmAddress,
@@ -356,8 +394,12 @@ export default function App(
       }
 
       try {
-        // Call the getSwapData API
+        // Prepare params via quote overrides if provided
         console.log("going to get tx data");
+        const sourceChainIdToUse = overrides?.chainId ?? chainId!;
+        const tokenSymbolToUse =
+          overrides?.tokenSymbol ?? (request.overrideToken || "USDC");
+        const amountToUse = overrides?.amount ?? request.amount.toString();
 
         const response = await fetch("/api/getSwapData", {
           method: "POST",
@@ -366,9 +408,9 @@ export default function App(
           },
           body: JSON.stringify({
             receiverFid: request.sender.fid,
-            amount: request.amount.toString(),
-            sourceChainId: chainId,
-            sourceTokenSymbol: request.overrideToken || "USDC",
+            amount: amountToUse,
+            sourceChainId: sourceChainIdToUse,
+            sourceTokenSymbol: tokenSymbolToUse,
             sourceAddress: evmAddress,
             // Pass through request-specific overrides so backend can prioritize them
             overrideChain: request.overrideChain || undefined,
@@ -428,37 +470,37 @@ export default function App(
     setCurrentPayingRequest(request);
 
     try {
-      const tokenSymbol = request.overrideToken || "USDC";
-      const amount = request.amount.toString();
-
-      console.log("=== CHECKING APPROVAL FOR FUND REQUEST ===");
-      console.log("Request details:", {
-        requestId: request.id,
-        amount: amount,
-        tokenSymbol: tokenSymbol,
-        senderUsername: request.sender.username,
-      });
-
-      // Check if approval is needed for this specific amount
-      const approvalCheck = await checkTokenApprovalNeeded(
-        publicClient!,
-        chainId!,
-        tokenSymbol,
+      // 1) Fetch quote to determine source chain/token & deposit amount
+      const { quote, targetChainId } = await fetchPaymentQuote(
         evmAddress!,
-        amount
+        request.amount.toString()
       );
 
-      console.log("Approval check result:", approvalCheck);
-
-      if (approvalCheck.needsApproval) {
-        setPaymentStep("approval");
-        await executeApprovalForRequest(request, approvalCheck.requiredAmount);
-        console.log("approval doneeeeee");
+      // 2) Switch chain if needed
+      if (chainId !== targetChainId) {
+        await switchChainAsync({ chainId: targetChainId });
       }
 
-      console.log("payment steppppp");
+      // 3) Compute approval amount from quote
+      const tokenDecimals = Number(quote.tokenDecimals ?? 6);
+      const requiredAmount = BigInt(
+        Math.floor(Number(quote.depositAmount) * Math.pow(10, tokenDecimals))
+      );
+
+      // 4) Execute approval (always approve exact required amount)
+      setPaymentStep("approval");
+      await executeApprovalForRequest(request, requiredAmount, {
+        chainId: targetChainId,
+        tokenSymbol: String(quote.tokenSymbol || "USDC").toUpperCase(),
+      });
+
+      // 5) Execute payment with quoted params
       setPaymentStep("payment");
-      await executePaymentTransaction(request);
+      await executePaymentTransaction(request, {
+        chainId: targetChainId,
+        tokenSymbol: String(quote.tokenSymbol || "USDC").toUpperCase(),
+        amount: String(quote.depositAmount),
+      });
     } catch (error) {
       console.error("Failed to check approval for fund request:", error);
       setPayingRequestId(null);
@@ -468,7 +510,8 @@ export default function App(
 
   const executeApprovalForRequest = async (
     request: any,
-    requiredAmount: bigint
+    requiredAmount: bigint,
+    overrides?: { chainId: number; tokenSymbol: string }
   ) => {
     if (!evmAddress || !chainId) {
       console.error("Missing required data for approval");
@@ -476,13 +519,17 @@ export default function App(
     }
 
     try {
-      const tokenSymbol = request.overrideToken || "USDC";
-      const tokenInfo = getTokenInfo(chainId, tokenSymbol);
+      const tokenSymbol =
+        overrides?.tokenSymbol || request.overrideToken || "USDC";
+      const chainToUse = overrides?.chainId ?? chainId;
+      const tokenInfo = getTokenInfo(chainToUse, tokenSymbol);
       if (!tokenInfo) {
-        throw new Error(`Token ${tokenSymbol} not found on chain ${chainId}`);
+        throw new Error(
+          `Token ${tokenSymbol} not found on chain ${chainToUse}`
+        );
       }
 
-      const gatewayAddress = getGatewayAddress(chainId);
+      const gatewayAddress = getGatewayAddress(chainToUse);
       if (gatewayAddress === "Native Integration") {
         throw new Error("No approval needed for native integration");
       }
@@ -517,7 +564,11 @@ export default function App(
         data: approvalData,
       });
       console.log("approval tx hash:", approvalHash);
-      await publicClient!.waitForTransactionReceipt({ hash: approvalHash });
+      try {
+        await publicClient!.waitForTransactionReceipt({ hash: approvalHash });
+      } catch (e) {
+        console.warn("waitForTransactionReceipt failed, proceeding:", e);
+      }
       console.log("approval confirmed on-chain, proceeding to bridge");
     } catch (err) {
       console.error("=== APPROVAL FAILED FOR FUND REQUEST ===");
@@ -603,11 +654,38 @@ export default function App(
               />
             </svg>
           </button>
+
+          {/* Current chain display */}
+          <div className="flex items-center px-3 py-2 rounded-full bg-white border border-gray-200">
+            <span className="text-xs text-gray-600">Chain:&nbsp;</span>
+            <span className="text-xs font-medium text-black">
+              {currentChainName}
+              {chainId ? ` (${chainId})` : ""}
+            </span>
+          </div>
+
+          {/* Temporary: switch to Arbitrum for testing */}
+          <button
+            onClick={() => switchChainAsync({ chainId: 42161 })}
+            className="text-xs bg-gray-800 text-white px-3 py-2 rounded-full hover:bg-gray-900 transition-colors"
+          >
+            Switch to Arbitrum
+          </button>
         </div>
       </div>
 
       {/* Main Content Section */}
       <div className="px-4 py-6">
+        {/* Always-visible network indicator for debugging */}
+        <div className="mb-3">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-gray-200">
+            <span className="text-xs text-gray-600">Network</span>
+            <span className="text-xs font-semibold text-black">
+              {currentChainName} {chainId ? `(${chainId})` : ""}
+            </span>
+          </div>
+        </div>
+
         {
           // Connected state - show balances
           <>

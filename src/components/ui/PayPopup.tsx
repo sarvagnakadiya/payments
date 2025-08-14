@@ -12,6 +12,7 @@ import {
   useSendTransaction,
   useWaitForTransactionReceipt,
   usePublicClient,
+  useSwitchChain,
 } from "wagmi";
 import { encodeFunctionData } from "viem";
 import NumberPad from "./NumberPad";
@@ -70,8 +71,10 @@ export default function PayPopup({
   // Wagmi hooks for transaction handling
   const { address, isConnected, chainId } = useAccount();
   const publicClient = usePublicClient();
+  const { switchChainAsync } = useSwitchChain();
   const {
     sendTransaction,
+    sendTransactionAsync,
     data: transactionHash,
     error: transactionError,
     isError: isTransactionError,
@@ -110,6 +113,34 @@ export default function PayPopup({
       }
     }
   }, [chainId, tokenOptions, selectedToken, onTokenChange]);
+
+  // Quote helpers
+  const mapBlockchainToChainId = (blockchain: string): number | null => {
+    const k = blockchain.toLowerCase();
+    if (k === "ethereum" || k === "mainnet") return 1;
+    if (k === "base") return 8453;
+    if (k === "arbitrum") return 42161;
+    if (k === "bsc" || k === "bnb" || k === "bnb chain") return 56;
+    if (k === "polygon" || k === "matic") return 137;
+    return null;
+  };
+
+  const fetchPaymentQuote = async (userAddress: string, amountStr: string) => {
+    const url = `https://api.gasyard.fi/api/sdk/process-payment-quote?userAddress=${encodeURIComponent(
+      userAddress
+    )}&amount=${encodeURIComponent(amountStr)}`;
+    const res = await fetch(url, {
+      headers: { "x-api-key": "trial" },
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error("Failed to fetch payment quote");
+    const data = await res.json();
+    const quote = Array.isArray(data.result) ? data.result[0] : undefined;
+    if (!quote) throw new Error("No quote returned");
+    const targetChainId = mapBlockchainToChainId(quote.blockchain);
+    if (!targetChainId) throw new Error("Unsupported blockchain in quote");
+    return { quote, targetChainId } as const;
+  };
 
   // Check approval status
   const checkApproval = React.useCallback(async () => {
@@ -350,12 +381,80 @@ export default function PayPopup({
     setError(null);
 
     try {
+      // 1) Fetch quote and switch chain/token accordingly
+      const { quote, targetChainId } = await fetchPaymentQuote(
+        address!,
+        amount
+      );
+      if (chainId !== targetChainId) {
+        await switchChainAsync({ chainId: targetChainId });
+      }
+      const tokenFromQuote = String(
+        quote.tokenSymbol || selectedToken
+      ).toUpperCase();
+      if (tokenFromQuote !== selectedToken) {
+        onTokenChange(tokenFromQuote);
+      }
+
+      // 2) Check and perform approval on quoted chain/token for quoted deposit amount
+      try {
+        const approvalCheck = await checkTokenApprovalNeeded(
+          publicClient!,
+          targetChainId,
+          tokenFromQuote,
+          address!,
+          String(quote.depositAmount)
+        );
+        if (approvalCheck.needsApproval) {
+          const tokenInfo = getTokenInfo(targetChainId, tokenFromQuote);
+          const gatewayAddress = getGatewayAddress(targetChainId);
+          if (tokenInfo && gatewayAddress !== "Native Integration") {
+            const approvalData = encodeFunctionData({
+              abi: [
+                {
+                  inputs: [
+                    { name: "spender", type: "address" },
+                    { name: "amount", type: "uint256" },
+                  ],
+                  name: "approve",
+                  outputs: [{ name: "", type: "bool" }],
+                  stateMutability: "nonpayable",
+                  type: "function",
+                },
+              ],
+              functionName: "approve",
+              args: [
+                gatewayAddress as `0x${string}`,
+                approvalCheck.requiredAmount,
+              ],
+            });
+            setIsApprovalStep(true);
+            const hash = await sendTransactionAsync({
+              to: tokenInfo.address as `0x${string}`,
+              data: approvalData,
+            });
+            try {
+              await publicClient!.waitForTransactionReceipt({ hash });
+            } catch (e) {
+              console.warn("waitForTransactionReceipt failed, proceeding:", e);
+            }
+            setIsApprovalStep(false);
+          }
+        }
+      } catch (approvalErr) {
+        console.error(
+          "Approval check/step failed (continuing to attempt bridge):",
+          approvalErr
+        );
+        setIsApprovalStep(false);
+      }
+
       console.log("=== CALLING BRIDGE API ===");
       console.log("API payload:", {
         receiverFid: selectedRecipient.fid.toString(),
-        amount: amount,
-        sourceChainId: chainId,
-        sourceTokenSymbol: selectedToken,
+        amount: String(quote.depositAmount),
+        sourceChainId: targetChainId,
+        sourceTokenSymbol: tokenFromQuote,
         sourceAddress: address,
       });
 
@@ -367,9 +466,9 @@ export default function PayPopup({
         },
         body: JSON.stringify({
           receiverFid: selectedRecipient.fid.toString(),
-          amount: amount,
-          sourceChainId: chainId,
-          sourceTokenSymbol: selectedToken,
+          amount: String(quote.depositAmount),
+          sourceChainId: targetChainId,
+          sourceTokenSymbol: tokenFromQuote,
           sourceAddress: address,
         }),
       });
@@ -461,37 +560,18 @@ export default function PayPopup({
     publicClient,
     selectedToken,
     sendTransaction,
+    onTokenChange,
+    switchChainAsync,
   ]);
 
-  // Reset approval status when transaction is confirmed
+  // Reset state when bridge transaction is confirmed
   React.useEffect(() => {
     if (isTransactionConfirmed && transactionHash) {
-      // Prevent duplicate processing of the same transaction
-      if (processedTransactions.current.has(transactionHash)) {
-        console.log("=== TRANSACTION ALREADY PROCESSED ===");
-        return;
-      }
-
+      if (processedTransactions.current.has(transactionHash)) return;
       processedTransactions.current.add(transactionHash);
 
-      console.log("=== TRANSACTION CONFIRMED ===");
-      console.log("isApprovalStep:", isApprovalStep);
-      console.log("Transaction hash:", transactionHash);
-
-      if (isApprovalStep) {
-        console.log(
-          "=== APPROVAL TRANSACTION CONFIRMED - PROCEEDING TO PAY ==="
-        );
-        // If this was an approval transaction, proceed to execute the bridge transaction
-        setIsApprovalStep(false);
-        // Force immediate approval state update
-        setApprovalComplete();
-        // Execute bridge transaction immediately after approval
-        executeBridgeTransaction();
-      } else if (isBridgeStep) {
-        console.log("=== PAY TRANSACTION CONFIRMED - RESETTING POPUP ===");
-        // If this was a bridge transaction, reset everything and close popup
-        setIsProcessing(false); // Stop the processing state
+      if (isBridgeStep) {
+        setIsProcessing(false);
         setIsBridgeStep(false);
         resetApproval();
         setSelectedRecipient(null);
@@ -503,15 +583,12 @@ export default function PayPopup({
   }, [
     isTransactionConfirmed,
     transactionHash,
-    isApprovalStep,
     isBridgeStep,
-    executeBridgeTransaction,
     resetApproval,
     setSelectedRecipient,
     clearSearch,
     onAmountChange,
     onClose,
-    setApprovalComplete,
   ]);
 
   // Monitor approval status changes and auto-proceed to payment when approval is no longer needed
@@ -535,16 +612,7 @@ export default function PayPopup({
       return;
     }
 
-    // If approval is needed, handle approval first
-    if (needsApproval) {
-      console.log("=== APPROVAL NEEDED - STARTING APPROVAL PROCESS ===");
-      setIsApprovalStep(true);
-      await handleApproval();
-      return;
-    }
-
-    console.log("=== NO APPROVAL NEEDED - EXECUTING PAY DIRECTLY ===");
-    // If no approval needed, execute bridge transaction directly
+    // Always run through executeBridgeTransaction which now fetches quote and switches chain
     await executeBridgeTransaction();
   };
 
