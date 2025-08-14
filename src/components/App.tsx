@@ -11,7 +11,8 @@ import {
 } from "wagmi";
 import { useWallet as useSolanaWallet } from "@solana/wallet-adapter-react";
 import { checkTokenApprovalNeeded } from "~/lib/tokenUtils";
-import { getTokenInfo, getGatewayAddress, getChainInfo } from "~/lib/tokens";
+import { getTokenInfo, getGatewayAddress } from "~/lib/tokens";
+import type { FarcasterUser } from "../hooks/useFarcasterUserSearch";
 import { encodeFunctionData } from "viem";
 import { useNeynarUser } from "../hooks/useNeynarUser";
 import { sdk } from "@farcaster/miniapp-sdk";
@@ -291,10 +292,37 @@ export default function App(
     isEvmConnected && evmAddress && chainId && publicClient
   );
 
-  // --- UI: current chain display ---
-  const currentChainName = chainId
-    ? getChainInfo(chainId)?.name || `Chain ${chainId}`
-    : "Not connected";
+  // --- Deep link recipient (for pay links) ---
+  const [deepLinkRecipient, setDeepLinkRecipient] =
+    useState<FarcasterUser | null>(null);
+
+  // Parse pay deep link and open Pay popup
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const shouldPay = params.get("pay");
+    if (shouldPay === "1") {
+      const amt = params.get("amount") || "0";
+      const tok = (params.get("token") || "USDC").toUpperCase();
+      const fidStr = params.get("fid");
+      const username = params.get("username") || "";
+      const name = params.get("name") || username;
+      const address = params.get("address") || "";
+      const avatar = params.get("avatar") || "";
+
+      setAmount(amt);
+      setSelectedToken(tok);
+
+      if (fidStr) {
+        const fid = Number(fidStr);
+        if (!Number.isNaN(fid)) {
+          setDeepLinkRecipient({ fid, username, name, address, avatar });
+        }
+      }
+
+      setShowPayPopup(true);
+    }
+  }, []);
 
   // --- Balances via backend API ---
   const [balancesLoading, setBalancesLoading] = useState(false);
@@ -654,38 +682,11 @@ export default function App(
               />
             </svg>
           </button>
-
-          {/* Current chain display */}
-          <div className="flex items-center px-3 py-2 rounded-full bg-white border border-gray-200">
-            <span className="text-xs text-gray-600">Chain:&nbsp;</span>
-            <span className="text-xs font-medium text-black">
-              {currentChainName}
-              {chainId ? ` (${chainId})` : ""}
-            </span>
-          </div>
-
-          {/* Temporary: switch to Arbitrum for testing */}
-          <button
-            onClick={() => switchChainAsync({ chainId: 42161 })}
-            className="text-xs bg-gray-800 text-white px-3 py-2 rounded-full hover:bg-gray-900 transition-colors"
-          >
-            Switch to Arbitrum
-          </button>
         </div>
       </div>
 
       {/* Main Content Section */}
       <div className="px-4 py-6">
-        {/* Always-visible network indicator for debugging */}
-        <div className="mb-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-gray-200">
-            <span className="text-xs text-gray-600">Network</span>
-            <span className="text-xs font-semibold text-black">
-              {currentChainName} {chainId ? `(${chainId})` : ""}
-            </span>
-          </div>
-        </div>
-
         {
           // Connected state - show balances
           <>
@@ -926,6 +927,7 @@ export default function App(
         selectedToken={selectedToken}
         onAmountChange={setAmount}
         onTokenChange={setSelectedToken}
+        prefillRecipient={deepLinkRecipient || undefined}
       />
 
       <RequestPopup

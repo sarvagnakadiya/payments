@@ -1,12 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import {
-  CaretCircleDownIcon,
-  CaretCircleUpIcon,
-  XCircleIcon,
-  BoxArrowDownIcon,
-} from "@phosphor-icons/react";
+import { XCircleIcon, BoxArrowDownIcon } from "@phosphor-icons/react";
 import NumberPad from "./NumberPad";
 import { formatAmount } from "../../lib/utils";
 import QRCodePopup from "./QRCodePopup";
@@ -15,7 +10,6 @@ import {
   useFarcasterUserSearch,
   type FarcasterUser,
 } from "../../hooks/useFarcasterUserSearch";
-import { getTokensForChain } from "../../lib/tokens";
 
 interface RequestPopupProps {
   isOpen: boolean;
@@ -53,12 +47,7 @@ export default function RequestPopup({
   const { users, isSearching, searchQuery, setSearchQuery, clearSearch } =
     useFarcasterUserSearch();
 
-  // Get tokens for Base chain (you can make this dynamic based on selected chain)
-  const tokenOptions = getTokensForChain(8453).map((token) => ({
-    symbol: token.symbol,
-    name: token.name,
-    icon: token.icon,
-  }));
+  // Token selection removed: settlement will use receiver's preferences
 
   const filteredRecipients = users;
 
@@ -83,7 +72,7 @@ export default function RequestPopup({
           receiverFid: String(selectedRecipient.fid),
           amount: parseFloat(amount),
           overrideChain: null, // Use user's preferred chain
-          overrideToken: selectedToken,
+          overrideToken: null, // Use receiver's preferred token
           overrideAddress: null, // Use user's preferred address
           note: note.trim() || null,
           expiresAt: null, // No expiration for now
@@ -299,70 +288,7 @@ export default function RequestPopup({
             </div>
           </div>
 
-          {/* Token Selector */}
-          <div className="relative flex justify-center">
-            <div
-              className={`bg-gray-100 rounded-full p-3 flex items-center justify-between cursor-pointer transition-all duration-200 ${
-                selectedToken ? "w-fit max-w-full" : "w-full"
-              }`}
-              onClick={() => setShowTokenDropdown(!showTokenDropdown)}
-            >
-              <div className="flex items-center">
-                <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                  <span className="text-white text-xs font-bold">
-                    {tokenOptions.find((t) => t.symbol === selectedToken)
-                      ?.icon || "$"}
-                  </span>
-                </div>
-                <span className="text-black font-medium">{selectedToken}</span>
-              </div>
-              {showTokenDropdown ? (
-                <CaretCircleUpIcon
-                  size={16}
-                  weight="fill"
-                  className="text-gray-400 ml-2"
-                />
-              ) : (
-                <CaretCircleDownIcon
-                  size={16}
-                  weight="fill"
-                  className="text-gray-400 ml-2"
-                />
-              )}
-            </div>
-
-            {/* Token Dropdown */}
-            {showTokenDropdown && (
-              <div className="absolute top-full left-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-10 min-w-full">
-                <div className="max-h-32 overflow-y-auto">
-                  {tokenOptions.map((token) => (
-                    <button
-                      key={token.symbol}
-                      onClick={() => {
-                        onTokenChange(token.symbol);
-                        setShowTokenDropdown(false);
-                      }}
-                      className="w-full p-3 text-left hover:bg-gray-50 flex items-center"
-                    >
-                      <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                        <span className="text-white text-xs font-bold">
-                          {token.icon}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-black">
-                          {token.symbol}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {token.name}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Token selection removed */}
 
           {/* Note Input */}
           <div className="bg-gray-100 rounded-xl p-3">
@@ -418,6 +344,12 @@ export default function RequestPopup({
         amount={amount}
         selectedToken={selectedToken}
         username={selectedRecipient?.username || ""}
+        recipient={{
+          fid: selectedRecipient?.fid,
+          name: selectedRecipient?.name,
+          address: selectedRecipient?.address,
+          avatar: selectedRecipient?.avatar,
+        }}
       />
 
       {/* Request Status Popup */}

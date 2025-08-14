@@ -36,6 +36,7 @@ interface PayPopupProps {
   selectedToken: string;
   onAmountChange: (amount: string) => void;
   onTokenChange: (token: string) => void;
+  prefillRecipient?: FarcasterUser;
 }
 
 export default function PayPopup({
@@ -45,11 +46,12 @@ export default function PayPopup({
   selectedToken,
   onAmountChange,
   onTokenChange,
+  prefillRecipient,
 }: PayPopupProps) {
   const [showRecipientDropdown, setShowRecipientDropdown] = useState(false);
   const [showTokenDropdown, setShowTokenDropdown] = useState(false);
   const [selectedRecipient, setSelectedRecipient] =
-    useState<FarcasterUser | null>(null);
+    useState<FarcasterUser | null>(prefillRecipient ?? null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isApprovalStep, setIsApprovalStep] = useState(false);
@@ -100,6 +102,14 @@ export default function PayPopup({
   }, [chainId]);
 
   const filteredRecipients = users;
+
+  // If recipient is prefilled (from deep link) ensure dropdown/search are reset
+  React.useEffect(() => {
+    if (prefillRecipient) {
+      setSelectedRecipient(prefillRecipient);
+      clearSearch();
+    }
+  }, [prefillRecipient, clearSearch]);
 
   // Ensure selected token is valid for current chain
   React.useEffect(() => {
