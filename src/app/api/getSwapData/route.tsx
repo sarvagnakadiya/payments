@@ -6,7 +6,9 @@ import {
   getTokenInfo,
 } from "~/lib/tokens";
 import { prisma } from "~/lib/prisma";
+import { getNeynarUser } from "~/lib/neynar";
 import { z } from "zod";
+import { parseUnits, encodeFunctionData } from "viem";
 
 // Mapping from Chain enum values to chain IDs
 const CHAIN_ENUM_TO_ID: Record<string, number> = {
@@ -155,12 +157,110 @@ async function handleSimplifiedBridgeRequest(data: {
 
   // Get receiver's preferences
   console.log("Fetching receiver preferences for FID:", receiverFid);
-  const receiver = await prisma.user.findUnique({
+  let receiver = await prisma.user.findUnique({
     where: { fid: receiverFid },
   });
 
   if (!receiver) {
-    console.log("Receiver not found for FID:", receiverFid);
+    console.log(
+      "Receiver not found for FID:",
+      receiverFid,
+      "- attempting auto-create from Neynar"
+    );
+    try {
+      const neynarUser = await getNeynarUser(Number(receiverFid));
+      if (!neynarUser) {
+        console.log("Neynar user not found for FID:", receiverFid);
+        return NextResponse.json(
+          { error: "Receiver not found" },
+          { status: 404 }
+        );
+      }
+
+      const username: string =
+        (neynarUser as any)?.username || `fid_${receiverFid}`;
+      const primaryEth: string =
+        ((neynarUser as any)?.verified_addresses?.primary?.eth_address as
+          | string
+          | undefined) || "";
+
+      let createdUser;
+      try {
+        createdUser = await prisma.user.create({
+          data: {
+            fid: receiverFid.toString(),
+            username,
+            usernameSource: "FARCASTER" as any,
+            preferredChain: "BASE" as any,
+            preferredToken: "USDC" as any,
+            preferredAddress: primaryEth || "",
+          },
+        });
+      } catch (err: unknown) {
+        const isUniqueConstraintViolation =
+          typeof err === "object" &&
+          err !== null &&
+          (err as any).code === "P2002";
+        if (isUniqueConstraintViolation) {
+          // Fallback to a unique username suffixing with fid
+          const fallbackUsername = `${username}_${receiverFid}`;
+          try {
+            createdUser = await prisma.user.create({
+              data: {
+                fid: receiverFid.toString(),
+                username: fallbackUsername,
+                usernameSource: "FARCASTER" as any,
+                preferredChain: "BASE" as any,
+                preferredToken: "USDC" as any,
+                preferredAddress: primaryEth || "",
+              },
+            });
+          } catch (err2) {
+            console.error(
+              "Failed to create user with fallback username:",
+              err2
+            );
+            const existingAfterConflict = await prisma.user.findFirst({
+              where: { OR: [{ fid: receiverFid.toString() }, { username }] },
+            });
+            if (!existingAfterConflict) {
+              return NextResponse.json(
+                { error: "Failed to auto-create receiver user" },
+                { status: 500 }
+              );
+            }
+            createdUser = existingAfterConflict;
+          }
+        } else {
+          console.error("Failed to auto-create receiver user:", err);
+          return NextResponse.json(
+            { error: "Failed to auto-create receiver user" },
+            { status: 500 }
+          );
+        }
+      }
+
+      console.log("Auto-created receiver:", {
+        fid: createdUser.fid,
+        username: createdUser.username,
+        preferredChain: createdUser.preferredChain,
+        preferredToken: createdUser.preferredToken,
+        preferredAddress: createdUser.preferredAddress,
+      });
+
+      // Continue with the newly created user
+      receiver = createdUser;
+    } catch (autoCreateErr) {
+      console.error("Error during auto-create flow:", autoCreateErr);
+      return NextResponse.json(
+        { error: "Failed to resolve receiver info" },
+        { status: 500 }
+      );
+    }
+  }
+
+  if (!receiver) {
+    // Invariant check: should not happen, but keep for type safety
     return NextResponse.json({ error: "Receiver not found" }, { status: 404 });
   }
 
@@ -350,15 +450,17 @@ async function handleSimplifiedBridgeRequest(data: {
     );
   }
 
-  // Convert amount to smallest unit (wei/smallest unit)
-  const sourceTokenAmount = (
-    parseFloat(amount) * Math.pow(10, sourceToken.decimals)
-  ).toString();
+  // Convert amount to smallest unit (wei/smallest unit) using precise bigint math
+  // The amount comes from the payment quote API and should be a human-readable decimal
+  const sourceTokenAmount = parseUnits(amount, sourceToken.decimals).toString();
 
   console.log("Amount conversion:", {
     originalAmount: amount,
+    originalAmountType: typeof amount,
+    originalAmountAsNumber: parseFloat(amount),
     sourceTokenDecimals: sourceToken.decimals,
     convertedAmount: sourceTokenAmount,
+    expectedForTwoTokens: parseUnits("2", sourceToken.decimals).toString(),
   });
 
   // Initialize Gasyard SDK
@@ -393,6 +495,92 @@ async function handleSimplifiedBridgeRequest(data: {
   };
 
   console.log("Bridge parameters:", JSON.stringify(bridgeParams, null, 2));
+
+  // Check if this is a same chain/token transfer - if so, create direct transfer
+  const isSameChain = sourceChainId === destinationChainId;
+  const isSameToken =
+    sourceTokenSymbol.toLowerCase() === destinationTokenSymbol.toLowerCase();
+
+  if (isSameChain && isSameToken) {
+    console.log("=== SAME CHAIN/TOKEN DETECTED - CREATING DIRECT TRANSFER ===");
+    console.log(
+      "Source chain:",
+      sourceChainId,
+      "Destination chain:",
+      destinationChainId
+    );
+    console.log(
+      "Source token:",
+      sourceTokenSymbol,
+      "Destination token:",
+      destinationTokenSymbol
+    );
+
+    // Create direct ERC20 transfer transaction using viem's encodeFunctionData
+    const transferData = encodeFunctionData({
+      abi: [
+        {
+          inputs: [
+            { name: "to", type: "address" },
+            { name: "amount", type: "uint256" },
+          ],
+          name: "transfer",
+          outputs: [{ name: "", type: "bool" }],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+      ],
+      functionName: "transfer",
+      args: [destinationAddress as `0x${string}`, BigInt(sourceTokenAmount)],
+    });
+
+    const directTransferTx = {
+      transaction: {
+        to: sourceToken.address,
+        data: transferData,
+        value: "0x0",
+      },
+    };
+
+    console.log(
+      "Direct transfer transaction:",
+      JSON.stringify(directTransferTx, null, 2)
+    );
+
+    return NextResponse.json({
+      success: true,
+      isDirectTransfer: true,
+      bridgeTransaction: directTransferTx,
+      sourceChain: {
+        id: sourceChain.id,
+        name: sourceChain.name,
+        gasyardId: sourceChain.gasyardId,
+      },
+      destinationChain: {
+        id: destinationChain.id,
+        name: destinationChain.name,
+        gasyardId: destinationChain.gasyardId,
+      },
+      sourceToken: {
+        symbol: sourceToken.symbol,
+        name: sourceToken.name,
+        address: sourceToken.address,
+        decimals: sourceToken.decimals,
+      },
+      destinationToken: {
+        symbol: destinationToken.symbol,
+        name: destinationToken.name,
+        address: destinationToken.address,
+        decimals: destinationToken.decimals,
+      },
+      amount: sourceTokenAmount,
+      receiver: {
+        fid: receiver.fid,
+        username: receiver.username,
+        preferredAddress: receiver.preferredAddress,
+      },
+    });
+  }
 
   // Additional validation and debugging
   console.log("Parameter validation:", {

@@ -391,6 +391,50 @@ export default function PayPopup({
     setError(null);
 
     try {
+      // First, check if this is a direct transfer by calling our API
+      console.log("=== CHECKING FOR DIRECT TRANSFER OPPORTUNITY ===");
+      const checkResponse = await fetch("/api/getSwapData", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          receiverFid: selectedRecipient.fid.toString(),
+          amount: amount,
+          sourceChainId: chainId!,
+          sourceTokenSymbol: selectedToken,
+          sourceAddress: address,
+        }),
+      });
+
+      const checkData = await checkResponse.json();
+
+      if (checkData.success && checkData.isDirectTransfer) {
+        console.log("=== DIRECT TRANSFER DETECTED - SIMPLIFIED FLOW ===");
+        console.log("Same chain/token, executing direct transfer");
+
+        const bridgeTransaction = checkData.bridgeTransaction?.transaction;
+        if (
+          !bridgeTransaction ||
+          !bridgeTransaction.to ||
+          !bridgeTransaction.data
+        ) {
+          throw new Error("Invalid direct transfer transaction data");
+        }
+
+        // Execute direct transfer immediately
+        sendTransaction({
+          to: bridgeTransaction.to as `0x${string}`,
+          data: bridgeTransaction.data as `0x${string}`,
+        });
+
+        console.log("=== DIRECT TRANSFER TRANSACTION SENT ===");
+        return;
+      }
+
+      // For cross-chain transfers, use the original complex flow
+      console.log("=== CROSS-CHAIN TRANSFER - USING QUOTE FLOW ===");
+
       // 1) Fetch quote and switch chain/token accordingly
       const { quote, targetChainId } = await fetchPaymentQuote(
         address!,
@@ -505,6 +549,14 @@ export default function PayPopup({
       ) {
         console.log("=== INVALID BRIDGE TRANSACTION DATA ===");
         throw new Error("Invalid bridge transaction data received from API");
+      }
+
+      // Log if this is a direct transfer
+      if (data.isDirectTransfer) {
+        console.log("=== DIRECT TRANSFER DETECTED IN PAY POPUP ===");
+        console.log(
+          "Same chain/token detected, skipping additional validations"
+        );
       }
 
       // Validate transaction parameters

@@ -11,6 +11,7 @@ export interface ChainInfo {
   id: number;
   gasyardId: number;
   name: string;
+  iconUrl?: string;
   gatewayContract: string;
   nativeCurrency: {
     name: string;
@@ -28,6 +29,7 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
     id: 1,
     gasyardId: 1,
     name: "Ethereum",
+    iconUrl: "https://api.gasyard.fi/uploads/eth-network.png",
     gatewayContract: "0x6a2A5B7D0434CC5b77e304bc9D68C20Dee805152",
     nativeCurrency: {
       name: "Ether",
@@ -69,6 +71,7 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
     id: 8453,
     gasyardId: 2,
     name: "Base",
+    iconUrl: "https://api.gasyard.fi/uploads/base-network.png",
     gatewayContract: "0x6a2A5B7D0434CC5b77e304bc9D68C20Dee805152",
     nativeCurrency: {
       name: "Ether",
@@ -94,6 +97,7 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
     id: 56,
     gasyardId: 3,
     name: "BNB Chain",
+    iconUrl: "https://api.gasyard.fi/uploads/bnb-network.png",
     gatewayContract: "0x6a2A5B7D0434CC5b77e304bc9D68C20Dee805152",
     nativeCurrency: {
       name: "BNB",
@@ -119,6 +123,7 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
     id: 42161,
     gasyardId: 4,
     name: "Arbitrum",
+    iconUrl: "https://api.gasyard.fi/uploads/arb-network.png",
     gatewayContract: "0x6a2A5B7D0434CC5b77e304bc9D68C20Dee805152",
     nativeCurrency: {
       name: "Ether",
@@ -144,6 +149,7 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
     id: 1329,
     gasyardId: 7,
     name: "Solana",
+    iconUrl: "https://api.gasyard.fi/uploads/solana-network.png",
     gatewayContract: "Native Integration",
     nativeCurrency: {
       name: "Solana",
@@ -177,6 +183,7 @@ export const SUPPORTED_CHAINS: Record<number, ChainInfo> = {
     id: 137,
     gasyardId: 10,
     name: "Polygon",
+    iconUrl: "https://api.gasyard.fi/uploads/polygon-network.png",
     gatewayContract: "0x57B74794abE88E9Ce04A927a79A56504D289A818",
     nativeCurrency: {
       name: "Polygon",
@@ -252,6 +259,20 @@ export function getSupportedChainIds(): number[] {
 export function getTokensForChain(chainId: number): TokenInfo[] {
   const chain = SUPPORTED_CHAINS[chainId];
   return chain ? chain.tokens : [];
+}
+
+// Static token images (from public/)
+export const TOKEN_IMAGE_SRC: Record<string, string> = {
+  USDC: "/usdc.png",
+  USDT: "/usdt.png",
+};
+
+export function getTokenImageSrc(symbol: string): string | undefined {
+  return TOKEN_IMAGE_SRC[symbol.toUpperCase()];
+}
+
+export function getNetworkIconUrl(chainId: number): string | undefined {
+  return SUPPORTED_CHAINS[chainId]?.iconUrl;
 }
 
 /**

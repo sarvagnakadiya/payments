@@ -11,7 +11,14 @@ import {
 } from "wagmi";
 import { useWallet as useSolanaWallet } from "@solana/wallet-adapter-react";
 import { checkTokenApprovalNeeded } from "~/lib/tokenUtils";
-import { getTokenInfo, getGatewayAddress } from "~/lib/tokens";
+import {
+  getTokenInfo,
+  getGatewayAddress,
+  getChainInfo,
+  getTokenImageSrc,
+  getSupportedChainIds,
+  getNetworkIconUrl,
+} from "~/lib/tokens";
 import type { FarcasterUser } from "../hooks/useFarcasterUserSearch";
 import { encodeFunctionData } from "viem";
 import { useNeynarUser } from "../hooks/useNeynarUser";
@@ -331,6 +338,19 @@ export default function App(
     USDC: number;
     USDT: number;
   }>({ USDC: 0, USDT: 0 });
+  const [stableTokenBalancesByChain, setStableTokenBalancesByChain] = useState<{
+    USDC: Record<number, number>;
+    USDT: Record<number, number>;
+  }>({ USDC: {}, USDT: {} });
+  const [showBreakdown, setShowBreakdown] = useState<{
+    USDC: boolean;
+    USDT: boolean;
+  }>({
+    USDC: false,
+    USDT: false,
+  });
+
+  // Token and network icons are provided via tokens lib
 
   const fetchBalances = useCallback(async () => {
     if (!evmAddress) return;
@@ -345,22 +365,51 @@ export default function App(
         tokenSymbol?: string;
         balance?: string;
         balanceUsd?: string | number;
+        blockchain?: string;
+        chainId?: number | string;
+        network?: string;
+        chain?: string;
       }> = data?.walletAssets?.assets || [];
 
       // Aggregate stablecoin balances across chains
       let usdc = 0;
       let usdt = 0;
+      const usdcByChain: Record<number, number> = {};
+      const usdtByChain: Record<number, number> = {};
       for (const asset of assets) {
         const symbol = (asset.tokenSymbol || "").toUpperCase();
         const bal = Number(asset.balance || 0);
-        if (symbol === "USDC") usdc += bal;
-        if (symbol === "USDT") usdt += bal;
+        // Derive chainId from various possible fields
+        let chainId: number | null = null;
+        const rawChainId = asset.chainId as any;
+        if (typeof rawChainId === "number") chainId = rawChainId;
+        else if (typeof rawChainId === "string" && rawChainId.trim() !== "") {
+          const parsed = Number(rawChainId);
+          if (!Number.isNaN(parsed)) chainId = parsed;
+        }
+        if (!chainId && asset.blockchain)
+          chainId = mapBlockchainToChainId(asset.blockchain);
+        if (!chainId && asset.network)
+          chainId = mapBlockchainToChainId(asset.network);
+        if (!chainId && asset.chain)
+          chainId = mapBlockchainToChainId(asset.chain);
+
+        if (symbol === "USDC") {
+          usdc += bal;
+          if (chainId) usdcByChain[chainId] = (usdcByChain[chainId] || 0) + bal;
+        }
+        if (symbol === "USDT") {
+          usdt += bal;
+          if (chainId) usdtByChain[chainId] = (usdtByChain[chainId] || 0) + bal;
+        }
       }
       setStableTokenBalances({ USDC: usdc, USDT: usdt });
+      setStableTokenBalancesByChain({ USDC: usdcByChain, USDT: usdtByChain });
       setTotalUsd(Number(data?.walletAssets?.totalBalanceUsd || 0));
     } catch (e) {
       console.error("Failed to load balances:", e);
       setStableTokenBalances({ USDC: 0, USDT: 0 });
+      setStableTokenBalancesByChain({ USDC: {}, USDT: {} });
       setTotalUsd(0);
     } finally {
       setBalancesLoading(false);
@@ -465,6 +514,14 @@ export default function App(
           throw new Error("Invalid bridge transaction data received from API");
         }
 
+        // Log if this is a direct transfer
+        if (data.isDirectTransfer) {
+          console.log("=== DIRECT TRANSFER DETECTED ===");
+          console.log(
+            "Skipping complex approval flow for same chain/token transfer"
+          );
+        }
+
         console.log("bridgeTransaction:", bridgeTransaction);
         console.log("going to send transaction noww");
         // Execute the bridge transaction and await submission
@@ -498,6 +555,60 @@ export default function App(
     setCurrentPayingRequest(request);
 
     try {
+      // First, check if this would be a direct transfer by calling the payment API
+      console.log("Checking if direct transfer is possible...");
+      const response = await fetch("/api/getSwapData", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          receiverFid: request.sender.fid,
+          amount: request.amount.toString(),
+          sourceChainId: chainId!,
+          sourceTokenSymbol: request.overrideToken || "USDC",
+          sourceAddress: evmAddress,
+          overrideChain: request.overrideChain || undefined,
+          overrideToken: request.overrideToken || undefined,
+          overrideAddress: request.overrideAddress || undefined,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || "Failed to generate transaction");
+      }
+
+      const bridgeTransaction = data.bridgeTransaction?.transaction;
+
+      if (
+        !bridgeTransaction ||
+        !bridgeTransaction.to ||
+        !bridgeTransaction.data
+      ) {
+        throw new Error("Invalid transaction data received from API");
+      }
+
+      // Check if this is a direct transfer
+      if (data.isDirectTransfer) {
+        console.log("=== DIRECT TRANSFER - SKIPPING APPROVAL ===");
+        console.log("Same chain/token detected, executing direct transfer");
+
+        // For direct transfers, skip approval and execute immediately
+        setPaymentStep("payment");
+
+        const bridgeHash = await sendTransactionAsync({
+          to: bridgeTransaction.to as `0x${string}`,
+          data: bridgeTransaction.data as `0x${string}`,
+        });
+        console.log("Direct transfer hash:", bridgeHash);
+        return;
+      }
+
+      // For cross-chain transfers, use the original flow with quote
+      console.log("Cross-chain transfer detected, using quote-based flow");
+
       // 1) Fetch quote to determine source chain/token & deposit amount
       const { quote, targetChainId } = await fetchPaymentQuote(
         evmAddress!,
@@ -530,9 +641,10 @@ export default function App(
         amount: String(quote.depositAmount),
       });
     } catch (error) {
-      console.error("Failed to check approval for fund request:", error);
+      console.error("Failed to process payment request:", error);
       setPayingRequestId(null);
       setCurrentPayingRequest(null);
+      setPaymentStep(null);
     }
   };
 
@@ -657,9 +769,23 @@ export default function App(
             className="flex items-center space-x-2 bg-white px-3 py-2 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors"
           >
             <div className="relative flex items-center">
-              <div className="w-4 h-4 bg-green-500 rounded-full z-10"></div>
-              <div className="w-4 h-4 bg-blue-500 rounded-full -ml-3 z-20"></div>
-              <div className="w-4 h-4 bg-purple-500 rounded-full -ml-3 z-30"></div>
+              {[
+                "https://api.gasyard.fi/uploads/base-network.png",
+                "https://api.gasyard.fi/uploads/arb-network.png",
+                "https://api.gasyard.fi/uploads/solana.png",
+              ].map((iconUrl, index) => {
+                const overlapClass = index > 0 ? "-ml-3" : "";
+                const zClasses = ["z-10", "z-20", "z-30"];
+                const zClass = zClasses[index] || "z-10";
+                return (
+                  <img
+                    key={iconUrl}
+                    src={iconUrl}
+                    alt="Network"
+                    className={`w-4 h-4 rounded-full object-cover ${overlapClass} ${zClass}`}
+                  />
+                );
+              })}
             </div>
             <span className="text-sm font-medium">Wallets</span>
             <svg
@@ -713,11 +839,13 @@ export default function App(
 
               <div className="bg-white rounded-2xl p-4 shadow-sm">
                 {/* USDC Balance */}
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center">
-                    <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                      <span className="text-white text-xs font-bold">$</span>
-                    </div>
+                    <img
+                      src={getTokenImageSrc("USDC") || "/usdc.png"}
+                      alt="USDC"
+                      className="w-8 h-8 rounded-full mr-3"
+                    />
                     <div>
                       <div className="font-semibold text-black">USDC</div>
                       <div className="text-sm text-gray-600">
@@ -728,20 +856,83 @@ export default function App(
                         )}
                       </div>
                     </div>
+                    <button
+                      onClick={() =>
+                        setShowBreakdown((prev) => ({
+                          ...prev,
+                          USDC: !prev.USDC,
+                        }))
+                      }
+                      className="ml-2 text-gray-500 hover:text-gray-700"
+                      aria-label="Toggle USDC breakdown"
+                    >
+                      <svg
+                        className={`w-4 h-4 transition-transform ${
+                          showBreakdown.USDC ? "rotate-180" : ""
+                        }`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 9l-7 7-7-7"
+                        />
+                      </svg>
+                    </button>
                   </div>
-                  <div className="font-semibold text-black">
-                    {balancesLoading
-                      ? "$0.00"
-                      : `$${stableTokenBalances.USDC.toFixed(2)}`}
+                  <div className="flex items-center space-x-2">
+                    <div className="font-semibold text-black">
+                      {balancesLoading
+                        ? "$0.00"
+                        : `$${stableTokenBalances.USDC.toFixed(2)}`}
+                    </div>
                   </div>
                 </div>
+                {showBreakdown.USDC && (
+                  <div className="pl-11 pb-3">
+                    {balancesLoading ? (
+                      <div className="spinner h-4 w-4"></div>
+                    ) : (
+                      Object.entries(stableTokenBalancesByChain.USDC)
+                        .filter(([, bal]) => (bal as number) > 0)
+                        .map(([cid, bal]) => {
+                          const info = getChainInfo(Number(cid));
+                          return (
+                            <div
+                              key={`usdc-${cid}`}
+                              className="flex items-center justify-between py-1"
+                            >
+                              <div className="flex items-center space-x-2">
+                                <img
+                                  src={getNetworkIconUrl(Number(cid))}
+                                  alt={`${info?.name || `Chain ${cid}`} logo`}
+                                  className="w-4 h-4 rounded"
+                                />
+                                <div className="text-sm text-gray-600">
+                                  {info?.name || `Chain ${cid}`}
+                                </div>
+                              </div>
+                              <div className="text-sm font-medium text-black">
+                                {Number(bal).toFixed(2)}
+                              </div>
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                )}
 
                 {/* USDT Balance */}
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center">
-                    <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center mr-3">
-                      <span className="text-white text-xs font-bold">T</span>
-                    </div>
+                    <img
+                      src={getTokenImageSrc("USDT") || "/usdt.png"}
+                      alt="USDT"
+                      className="w-8 h-8 rounded-full mr-3"
+                    />
                     <div>
                       <div className="font-semibold text-black">USDT</div>
                       <div className="text-sm text-gray-600">
@@ -752,13 +943,74 @@ export default function App(
                         )}
                       </div>
                     </div>
+                    <button
+                      onClick={() =>
+                        setShowBreakdown((prev) => ({
+                          ...prev,
+                          USDT: !prev.USDT,
+                        }))
+                      }
+                      className="ml-2 text-gray-500 hover:text-gray-700"
+                      aria-label="Toggle USDT breakdown"
+                    >
+                      <svg
+                        className={`w-4 h-4 transition-transform ${
+                          showBreakdown.USDT ? "rotate-180" : ""
+                        }`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 9l-7 7-7-7"
+                        />
+                      </svg>
+                    </button>
                   </div>
-                  <div className="font-semibold text-black">
-                    {balancesLoading
-                      ? "$0.00"
-                      : `$${stableTokenBalances.USDT.toFixed(2)}`}
+                  <div className="flex items-center space-x-2">
+                    <div className="font-semibold text-black">
+                      {balancesLoading
+                        ? "$0.00"
+                        : `$${stableTokenBalances.USDT.toFixed(2)}`}
+                    </div>
                   </div>
                 </div>
+                {showBreakdown.USDT && (
+                  <div className="pl-11">
+                    {balancesLoading ? (
+                      <div className="spinner h-4 w-4"></div>
+                    ) : (
+                      Object.entries(stableTokenBalancesByChain.USDT)
+                        .filter(([, bal]) => (bal as number) > 0)
+                        .map(([cid, bal]) => {
+                          const info = getChainInfo(Number(cid));
+                          return (
+                            <div
+                              key={`usdt-${cid}`}
+                              className="flex items-center justify-between py-1"
+                            >
+                              <div className="flex items-center space-x-2">
+                                <img
+                                  src={getNetworkIconUrl(Number(cid))}
+                                  alt={`${info?.name || `Chain ${cid}`} logo`}
+                                  className="w-4 h-4 rounded"
+                                />
+                                <div className="text-sm text-gray-600">
+                                  {info?.name || `Chain ${cid}`}
+                                </div>
+                              </div>
+                              <div className="text-sm font-medium text-black">
+                                {Number(bal).toFixed(2)}
+                              </div>
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
