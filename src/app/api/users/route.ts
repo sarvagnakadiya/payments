@@ -1,7 +1,7 @@
 import { NeynarAPIClient } from "@neynar/nodejs-sdk";
 import { NextResponse } from "next/server";
 import { prisma } from "~/lib/prisma";
-import { getNeynarUser } from "~/lib/neynar";
+import { getNeynarUser, getNeynarClient } from "~/lib/neynar";
 
 export async function POST(request: Request) {
   try {
@@ -95,6 +95,57 @@ export async function POST(request: Request) {
     console.error("Failed to create/update user:", error);
     return NextResponse.json(
       { error: "Failed to create/update user" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const fidsParam = searchParams.get("fids");
+
+    if (!fidsParam) {
+      return NextResponse.json(
+        { error: "fids parameter is required" },
+        { status: 400 }
+      );
+    }
+
+    // Parse comma-separated FIDs
+    const fids = fidsParam.split(",").map((fid) => {
+      const parsed = parseInt(fid.trim());
+      if (isNaN(parsed)) {
+        throw new Error(`Invalid FID: ${fid}`);
+      }
+      return parsed;
+    });
+
+    if (fids.length === 0) {
+      return NextResponse.json(
+        { error: "At least one valid FID is required" },
+        { status: 400 }
+      );
+    }
+
+    const client = getNeynarClient();
+    const response = await client.fetchBulkUsers({ fids });
+
+    // Transform the response to include profile pictures and other relevant data
+    const users = response.users.map((user) => ({
+      fid: user.fid,
+      username: user.username,
+      displayName: user.display_name,
+      pfpUrl: user.pfp_url,
+      score: user.score || 0,
+      verifiedAddresses: user.verified_addresses,
+    }));
+
+    return NextResponse.json({ users });
+  } catch (error) {
+    console.error("Failed to fetch users:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch users" },
       { status: 500 }
     );
   }

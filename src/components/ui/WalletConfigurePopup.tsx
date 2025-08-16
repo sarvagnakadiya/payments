@@ -12,8 +12,11 @@ import {
   getSupportedChainIds,
   getChainInfo,
   getTokensForChain,
+  getTokenImageSrc,
+  getNetworkIconUrl,
   type TokenInfo,
 } from "../../lib/tokens";
+import { AddressAvatar } from "~/lib/avatarGenerator";
 
 interface WalletConfigurePopupProps {
   isOpen: boolean;
@@ -274,7 +277,7 @@ export default function WalletConfigurePopup({
         {/* Scrollable Content */}
         <div className="overflow-y-auto max-h-[calc(90vh-80px)]">
           {/* User Profile Section */}
-          <div className="p-4">
+          <div className="p-3">
             <div className="flex flex-col items-center">
               {/* Profile Image */}
               {profileImage ? (
@@ -296,8 +299,8 @@ export default function WalletConfigurePopup({
           </div>
 
           {/* Preferred Settlement Section */}
-          <div className="p-4">
-            <h3 className="font-bold text-black mb-3">Preferred Settlement</h3>
+          <div className="p-3">
+            <h3 className="font-bold text-black mb-2">Preferred Settlement</h3>
 
             {/* Chain and Token Selection */}
             {isLoading ? (
@@ -314,7 +317,15 @@ export default function WalletConfigurePopup({
                     className="w-full flex items-center justify-between p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
                   >
                     <div className="flex items-center">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full mr-2" />
+                      {selectedChainInfo?.iconUrl ? (
+                        <img
+                          src={selectedChainInfo.iconUrl}
+                          alt={selectedChainInfo.name}
+                          className="w-6 h-6 rounded-full mr-3"
+                        />
+                      ) : (
+                        <div className="w-6 h-6 bg-gray-400 rounded-full mr-3" />
+                      )}
                       <span className="font-medium text-black">
                         {selectedChainInfo?.name}
                       </span>
@@ -338,23 +349,35 @@ export default function WalletConfigurePopup({
                   {showChainDropdown && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-10">
                       <div className="max-h-48 overflow-y-auto">
-                        {chainList.map((chain) => (
-                          <button
-                            key={chain.id}
-                            onClick={() => handleChainSelect(chain.id)}
-                            className="w-full p-2 text-left hover:bg-gray-50 flex items-center"
-                          >
-                            <div>
-                              <div className="text-sm font-medium text-black">
-                                {chain.name}
+                        {chainList.map((chain) => {
+                          const chainInfo = getChainInfo(chain.id);
+                          return (
+                            <button
+                              key={chain.id}
+                              onClick={() => handleChainSelect(chain.id)}
+                              className="w-full p-3 text-left hover:bg-gray-50 flex items-center transition-colors"
+                            >
+                              {chainInfo?.iconUrl ? (
+                                <img
+                                  src={chainInfo.iconUrl}
+                                  alt={chain.name}
+                                  className="w-8 h-8 rounded-full mr-3 flex-shrink-0"
+                                />
+                              ) : (
+                                <div className="w-8 h-8 bg-gray-400 rounded-full mr-3 flex-shrink-0" />
+                              )}
+                              <div>
+                                <div className="text-sm font-medium text-black">
+                                  {chain.name}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {getTokensForChain(chain.id).length} tokens
+                                  available
+                                </div>
                               </div>
-                              <div className="text-xs text-gray-500">
-                                {getTokensForChain(chain.id).length} tokens
-                                available
-                              </div>
-                            </div>
-                          </button>
-                        ))}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -367,11 +390,20 @@ export default function WalletConfigurePopup({
                     className="w-full flex items-center justify-between p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
                   >
                     <div className="flex items-center">
-                      <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                        <span className="text-white text-xs font-bold">
-                          {selectedTokenInfo?.icon || "$"}
-                        </span>
-                      </div>
+                      {selectedTokenInfo &&
+                      getTokenImageSrc(selectedTokenInfo.symbol) ? (
+                        <img
+                          src={getTokenImageSrc(selectedTokenInfo.symbol)}
+                          alt={selectedTokenInfo.symbol}
+                          className="w-6 h-6 rounded-full mr-3"
+                        />
+                      ) : (
+                        <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
+                          <span className="text-white text-xs font-bold">
+                            {selectedTokenInfo?.icon || "$"}
+                          </span>
+                        </div>
+                      )}
                       <span className="font-medium text-black">
                         {selectedTokenInfo?.symbol || "Select Token"}
                       </span>
@@ -399,13 +431,21 @@ export default function WalletConfigurePopup({
                           <button
                             key={token.symbol}
                             onClick={() => handleTokenSelect(token.symbol)}
-                            className="w-full p-2 text-left hover:bg-gray-50 flex items-center"
+                            className="w-full p-3 text-left hover:bg-gray-50 flex items-center transition-colors"
                           >
-                            <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                              <span className="text-white text-xs font-bold">
-                                {token.icon}
-                              </span>
-                            </div>
+                            {getTokenImageSrc(token.symbol) ? (
+                              <img
+                                src={getTokenImageSrc(token.symbol)}
+                                alt={token.symbol}
+                                className="w-8 h-8 rounded-full mr-3 flex-shrink-0"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center mr-3 flex-shrink-0">
+                                <span className="text-white text-xs font-bold">
+                                  {token.icon}
+                                </span>
+                              </div>
+                            )}
                             <div>
                               <div className="text-sm font-medium text-black">
                                 {token.symbol}
@@ -425,9 +465,9 @@ export default function WalletConfigurePopup({
           </div>
 
           {/* Receiving Address Section - show all, disable mismatched type */}
-          <div className="p-4">
-            <h3 className="font-bold text-black mb-3">Receiving address</h3>
-            <div className="space-y-3">
+          <div className="p-3">
+            <h3 className="font-bold text-black mb-2">Receiving address</h3>
+            <div className="space-y-2">
               <div>
                 <div className="text-sm font-medium text-black mb-2">EVM</div>
                 <div className="space-y-2">
@@ -452,21 +492,26 @@ export default function WalletConfigurePopup({
                           setPreferredAddress(addr);
                           setHasChanges(true);
                         }}
-                        className={`w-full flex items-center justify-between p-2 bg-white border rounded-lg transition-colors ${
+                        className={`w-full flex items-center justify-between p-3 bg-white border rounded-lg transition-colors ${
                           isSelected
                             ? "border-blue-500 bg-blue-50"
                             : "border-gray-200 hover:bg-gray-50"
                         } ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
                       >
                         <div className="flex items-center">
-                          <div className="w-6 h-6 bg-gradient-to-r from-purple-500 via-blue-500 to-green-500 rounded-full flex items-center justify-center mr-3">
-                            <span className="text-white text-xs font-bold">
-                              E
+                          <AddressAvatar
+                            address={addr}
+                            size="md"
+                            className="mr-3 flex-shrink-0"
+                          />
+                          <div className="flex flex-col items-start">
+                            <span className="text-black text-sm font-medium">
+                              {truncateAddress(addr)}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              EVM Address
                             </span>
                           </div>
-                          <span className="text-black text-sm">
-                            {truncateAddress(addr)}
-                          </span>
                         </div>
                         {isSelected && (
                           <CheckIcon
@@ -506,21 +551,26 @@ export default function WalletConfigurePopup({
                           setPreferredAddress(addr);
                           setHasChanges(true);
                         }}
-                        className={`w-full flex items-center justify-between p-2 bg-white border rounded-lg transition-colors ${
+                        className={`w-full flex items-center justify-between p-3 bg-white border rounded-lg transition-colors ${
                           isSelected
                             ? "border-purple-500 bg-purple-50"
                             : "border-gray-200 hover:bg-gray-50"
                         } ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
                       >
                         <div className="flex items-center">
-                          <div className="w-6 h-6 bg-purple-500 rounded-full flex items-center justify-center mr-3">
-                            <span className="text-white text-xs font-bold">
-                              S
+                          <AddressAvatar
+                            address={addr}
+                            size="md"
+                            className="mr-3 flex-shrink-0"
+                          />
+                          <div className="flex flex-col items-start">
+                            <span className="text-black text-sm font-medium">
+                              {truncateAddress(addr)}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              Solana Address
                             </span>
                           </div>
-                          <span className="text-black text-sm">
-                            {truncateAddress(addr)}
-                          </span>
                         </div>
                         {isSelected && (
                           <CheckIcon
@@ -540,7 +590,7 @@ export default function WalletConfigurePopup({
           {/* Other Wallets Section removed in favor of explicit address lists */}
 
           {/* Add Wallets Button */}
-          <div className="p-4 pb-20"></div>
+          <div className="p-3 pb-16"></div>
         </div>
       </div>
 

@@ -22,12 +22,14 @@ import {
 import type { FarcasterUser } from "../hooks/useFarcasterUserSearch";
 import { encodeFunctionData } from "viem";
 import { useNeynarUser } from "../hooks/useNeynarUser";
+import { useUserProfile } from "../hooks/useUserProfile";
 import { sdk } from "@farcaster/miniapp-sdk";
 
 import ActionSheet from "./ui/ActionSheet";
 import PayPopup from "./ui/PayPopup";
 import RequestPopup from "./ui/RequestPopup";
 import WalletConfigurePopup from "./ui/WalletConfigurePopup";
+import ActivityTile from "./ActivityTile";
 import {
   BoxArrowDownIcon,
   CoinsIcon,
@@ -166,6 +168,15 @@ export default function App(
       }
     },
     [fetchFundRequests, context?.user?.fid]
+  );
+
+  const handleDenyRequest = useCallback(
+    async (requestId: string) => {
+      setDenyingRequestId(requestId);
+      await updateRequestStatus(requestId, "REJECTED");
+      setDenyingRequestId(null);
+    },
+    [updateRequestStatus]
   );
   const [payingRequestId, setPayingRequestId] = useState<string | null>(null);
   const [denyingRequestId, setDenyingRequestId] = useState<string | null>(null);
@@ -743,9 +754,9 @@ export default function App(
       }}
     >
       {/* Header Section */}
-      <div className="px-4 py-4 flex items-center justify-between">
+      <div className="px-3 py-3 flex items-center justify-between">
         {/* Profile on left */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2">
           {context?.user?.pfpUrl ? (
             <img
               src={context.user.pfpUrl}
@@ -812,21 +823,21 @@ export default function App(
       </div>
 
       {/* Main Content Section */}
-      <div className="px-4 py-6">
+      <div className="px-3 py-4">
         {
           // Connected state - show balances
           <>
             {/* Main balance amount */}
-            <div className="text-center mb-4">
-              <div className="text-4xl font-bold text-black">
+            <div className="text-center mb-3">
+              <div className="text-3xl font-bold text-black">
                 ${balancesLoading ? "0.0" : totalUsd.toFixed(1)}
               </div>
             </div>
 
             {/* Balance card */}
-            <div className="bg-white rounded-2xl shadow-sm">
+            <div className="bg-white rounded-xl shadow-sm">
               {/* Card header */}
-              <div className="flex bg-white rounded-2xl items-center p-2">
+              <div className="flex bg-white rounded-xl items-center p-2">
                 <div className="w-6 h-6 bg-pink-500 rounded-full flex items-center justify-center mr-3">
                   <CoinsIcon
                     size={32}
@@ -837,9 +848,9 @@ export default function App(
                 <h2 className="font-semibold text-black">Balance</h2>
               </div>
 
-              <div className="bg-white rounded-2xl p-4 shadow-sm">
+              <div className="bg-white rounded-xl p-3 shadow-sm">
                 {/* USDC Balance */}
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center">
                     <img
                       src={getTokenImageSrc("USDC") || "/usdc.png"}
@@ -926,7 +937,7 @@ export default function App(
                 )}
 
                 {/* USDT Balance */}
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center">
                     <img
                       src={getTokenImageSrc("USDT") || "/usdt.png"}
@@ -1015,12 +1026,12 @@ export default function App(
             </div>
 
             {/* Activities Section */}
-            <div className="mt-6">
-              <h2 className="font-semibold text-black mb-4">Activities</h2>
+            <div className="mt-4">
+              <h2 className="font-semibold text-black mb-3">Activities</h2>
 
               {requestsLoading ? (
                 <div className="bg-white rounded-2xl p-4 shadow-sm">
-                  <div className="flex items-center justify-center py-8">
+                  <div className="flex items-center justify-center py-6">
                     <div className="spinner h-6 w-6"></div>
                     <span className="ml-2 text-gray-600">
                       Loading requests...
@@ -1029,7 +1040,7 @@ export default function App(
                 </div>
               ) : fundRequests.length === 0 ? (
                 <div className="bg-white rounded-2xl p-4 shadow-sm">
-                  <div className="text-center py-8">
+                  <div className="text-center py-6">
                     <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
                       <BoxArrowDownIcon size={24} className="text-gray-400" />
                     </div>
@@ -1037,113 +1048,23 @@ export default function App(
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {fundRequests
                     .filter((request) => request.status === "PENDING")
                     .map((request) => (
-                      <div
+                      <ActivityTile
                         key={request.id}
-                        className="bg-white rounded-2xl p-4 shadow-sm"
-                      >
-                        <div className="flex items-start space-x-3">
-                          {/* Avatar */}
-                          <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0">
-                            <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center">
-                              <div className="w-2 h-2 bg-white rounded-full"></div>
-                            </div>
-                          </div>
-
-                          {/* Activity Content */}
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-2 mb-1">
-                              <span className="text-sm text-gray-500">
-                                @{request.sender.username}
-                              </span>
-                              <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
-                                <BoxArrowDownIcon
-                                  size={10}
-                                  weight="fill"
-                                  className="text-white"
-                                />
-                              </div>
-                              <span className="text-sm text-black">
-                                requested payment of
-                              </span>
-                            </div>
-
-                            <div className="text-lg font-bold text-black mb-3">
-                              ${Number(request.amount).toFixed(2)}
-                              {request.overrideToken && (
-                                <span className="text-sm text-gray-500 ml-2">
-                                  in {request.overrideToken}
-                                </span>
-                              )}
-                            </div>
-
-                            {request.note && (
-                              <div className="text-sm text-gray-600 mb-3">
-                                &ldquo;{request.note}&rdquo;
-                              </div>
-                            )}
-
-                            {/* Action Buttons */}
-                            <div className="flex space-x-2">
-                              <button
-                                onClick={() => {
-                                  if (!isWalletConnected) {
-                                    setShowWalletConfigurePopup(true);
-                                    return;
-                                  }
-                                  handlePayRequest(request);
-                                }}
-                                disabled={
-                                  !isWalletConnected ||
-                                  payingRequestId === request.id ||
-                                  denyingRequestId === request.id
-                                }
-                                className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-                                  !isWalletConnected
-                                    ? "bg-gray-300 text-white cursor-not-allowed"
-                                    : payingRequestId === request.id
-                                    ? "bg-orange-300 text-white cursor-not-allowed"
-                                    : "bg-orange-500 text-white hover:bg-orange-600"
-                                }`}
-                              >
-                                {!isWalletConnected
-                                  ? "Connect Wallet"
-                                  : payingRequestId === request.id
-                                  ? paymentStep === "approval"
-                                    ? "Approving..."
-                                    : "Processing..."
-                                  : "Pay"}
-                              </button>
-                              <button
-                                onClick={async () => {
-                                  setDenyingRequestId(request.id);
-                                  await updateRequestStatus(
-                                    request.id,
-                                    "REJECTED"
-                                  );
-                                  setDenyingRequestId(null);
-                                }}
-                                disabled={
-                                  payingRequestId === request.id ||
-                                  denyingRequestId === request.id
-                                }
-                                className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-                                  denyingRequestId === request.id
-                                    ? "bg-gray-400 text-white cursor-not-allowed"
-                                    : "bg-gray-600 text-white hover:bg-gray-700"
-                                }`}
-                              >
-                                {denyingRequestId === request.id
-                                  ? "Processing..."
-                                  : "Deny"}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                        request={request}
+                        isWalletConnected={isWalletConnected}
+                        payingRequestId={payingRequestId}
+                        denyingRequestId={denyingRequestId}
+                        paymentStep={paymentStep}
+                        onPayRequest={handlePayRequest}
+                        onDenyRequest={handleDenyRequest}
+                        onShowWalletConfigurePopup={() =>
+                          setShowWalletConfigurePopup(true)
+                        }
+                      />
                     ))}
                 </div>
               )}
@@ -1154,7 +1075,7 @@ export default function App(
 
       {/* Floating Action Button - only show when connected */}
       {isWalletConnected && (
-        <div className="fixed bottom-6 right-6">
+        <div className="fixed bottom-4 right-4">
           <PlusCircleIcon
             size={64}
             weight="fill"

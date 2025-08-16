@@ -141,7 +141,7 @@ export default function RequestPopup({
         }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 pb-2">
+        <div className="flex items-center justify-between p-3 pb-2">
           <div className="flex items-center">
             <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center mr-3">
               <BoxArrowDownIcon
@@ -173,7 +173,7 @@ export default function RequestPopup({
         </div>
 
         {/* Content */}
-        <div className="px-4 pb-4 space-y-4">
+        <div className="px-3 pb-3 space-y-3">
           {/* Recipient Input */}
           <div className="relative flex justify-center">
             <div

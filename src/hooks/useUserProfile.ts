@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export interface NeynarUser {
+export interface UserProfile {
   fid: number;
   username: string;
   displayName: string;
@@ -9,20 +9,22 @@ export interface NeynarUser {
   verifiedAddresses: any;
 }
 
-export function useNeynarUser(context?: { user?: { fid?: number } }) {
-  const [user, setUser] = useState<NeynarUser | null>(null);
+export function useUserProfile(fid: string | null) {
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!context?.user?.fid) {
-      setUser(null);
+    if (!fid) {
+      setProfile(null);
       setError(null);
       return;
     }
+
     setLoading(true);
     setError(null);
-    fetch(`/api/users?fids=${context.user.fid}`)
+
+    fetch(`/api/users?fids=${fid}`)
       .then((response) => {
         if (!response.ok)
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -30,14 +32,14 @@ export function useNeynarUser(context?: { user?: { fid?: number } }) {
       })
       .then((data) => {
         if (data.users?.[0]) {
-          setUser(data.users[0]);
+          setProfile(data.users[0]);
         } else {
-          setUser(null);
+          setProfile(null);
         }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [context?.user?.fid]);
+  }, [fid]);
 
-  return { user, loading, error };
+  return { profile, loading, error };
 }
