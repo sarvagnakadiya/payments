@@ -1,12 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  XCircleIcon,
-  CopyIcon,
-  ShareIcon,
-  BoxArrowDownIcon,
-} from "@phosphor-icons/react";
+import { XCircleIcon, CopyIcon, BoxArrowDownIcon } from "@phosphor-icons/react";
 import { formatAmount } from "../../lib/utils";
 
 import QRCodeStyling from "qr-code-styling";
@@ -15,8 +10,11 @@ interface QRCodePopupProps {
   isOpen: boolean;
   onClose: () => void;
   amount: string;
-  selectedToken: string;
   username: string;
+  // Requester info (the connected user creating the request)
+  requesterFid?: number | string;
+  requesterUsername?: string;
+  requesterPfpUrl?: string;
   // Optional additional recipient metadata for better prefill UX
   recipient?: {
     fid?: number | string;
@@ -30,36 +28,27 @@ export default function QRCodePopup({
   isOpen,
   onClose,
   amount,
-  selectedToken,
   username,
+  requesterFid,
+  requesterUsername,
+  requesterPfpUrl,
   recipient,
 }: QRCodePopupProps) {
   const [copied, setCopied] = useState(false);
   const qrRef = useRef<HTMLDivElement>(null);
   const qrCode = useRef<QRCodeStyling | null>(null);
 
-  // Sample token options (restrict to stablecoins)
-  const tokenOptions = [
-    { symbol: "USDC", name: "USD Coin", icon: "💵" },
-    { symbol: "USDT", name: "Tether USD", icon: "💵" },
-  ];
-
-  const selectedTokenInfo = tokenOptions.find(
-    (t) => t.symbol === selectedToken
-  );
-
   // Generate a deep link containing payment details
   const paymentLink = (() => {
     const params = new URLSearchParams({
       pay: "1",
       amount: amount || "0",
-      token: selectedToken || "USDC",
-      username: username || "",
+      username: (requesterUsername || username || "").toString(),
     });
-    if (recipient?.fid) params.set("fid", String(recipient.fid));
-    if (recipient?.name) params.set("name", recipient.name);
-    if (recipient?.address) params.set("address", recipient.address);
-    if (recipient?.avatar) params.set("avatar", recipient.avatar);
+    const fidToEncode = requesterFid ?? recipient?.fid;
+    if (fidToEncode !== undefined && fidToEncode !== null) {
+      params.set("fid", String(fidToEncode));
+    }
     const BASE = "https://farcaster.xyz/miniapps/5wCAaRVHcUM9/payments";
     return `${BASE}?${params.toString()}`;
   })();
@@ -74,23 +63,13 @@ export default function QRCodePopup({
     }
   };
 
-  const handleShareLink = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `Payment Request from ${username}`,
-          text: `${username} is requesting $${formatAmount(
-            amount
-          )} ${selectedToken}`,
-          url: paymentLink,
-        });
-      } catch (err) {
-        console.error("Failed to share:", err);
-      }
-    } else {
-      // Fallback to copying if sharing is not supported
-      handleCopyLink();
-    }
+  const handleShareLink = () => {
+    const recipientFid = recipient?.fid;
+    if (!recipientFid) return;
+    const url = `https://farcaster.xyz/~/inbox/create/${recipientFid}?text=${encodeURIComponent(
+      paymentLink
+    )}`;
+    window.open(url, "_blank");
   };
 
   // Generate QR Code
@@ -186,12 +165,6 @@ export default function QRCodePopup({
 
         {/* Content */}
         <div className="px-3 pb-3 space-y-3">
-          {/* Username Display */}
-          <div className="text-center">
-            <div className="text-xs text-gray-500 mb-1">Requesting from</div>
-            <div className="text-sm font-semibold text-black">{username}</div>
-          </div>
-
           {/* QR Code */}
           <div className="flex justify-center">
             <div className="w-56 h-56 bg-white rounded-lg flex items-center justify-center relative">
@@ -199,29 +172,31 @@ export default function QRCodePopup({
                 ref={qrRef}
                 className="w-full h-full flex items-center justify-center"
               />
-              {/* Center Logo/Image */}
+              {/* Center Logo/Image with white background to prevent QR overlap */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-16 h-16 bg-black rounded-full flex items-center justify-center">
-                  <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center">
-                    <span className="text-sm font-bold">👤</span>
-                  </div>
+                <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center">
+                  {requesterPfpUrl || recipient?.avatar ? (
+                    <img
+                      src={(requesterPfpUrl || recipient?.avatar) as string}
+                      alt="Requester Avatar"
+                      className="w-14 h-14 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-14 h-14 bg-black rounded-full flex items-center justify-center">
+                      <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center">
+                        <span className="text-sm font-bold">👤</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Amount and Token */}
-          <div className="flex items-center justify-center gap-3">
+          {/* Amount (token removed; settlement uses preferred token) */}
+          <div className="flex items-center justify-center">
             <div className="text-4xl font-bold text-black">
               ${formatAmount(amount)}
-            </div>
-            <div className="inline-flex items-center bg-gray-100 rounded-full px-3 py-1">
-              <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center mr-2">
-                <span className="text-white text-xs font-bold">$</span>
-              </div>
-              <span className="text-sm font-medium text-gray-700">
-                {selectedToken}
-              </span>
             </div>
           </div>
 
@@ -243,16 +218,18 @@ export default function QRCodePopup({
                 Link copied to clipboard!
               </div>
             )}
+            <button
+              onClick={handleShareLink}
+              disabled={!recipient?.fid}
+              className={`w-full py-3 rounded-xl font-semibold text-lg transition-all duration-200 ${
+                recipient?.fid
+                  ? "bg-black text-white hover:bg-gray-800 active:scale-95"
+                  : "bg-gray-200 text-gray-400 cursor-not-allowed opacity-60"
+              }`}
+            >
+              Share link
+            </button>
           </div>
-
-          {/* Share Button */}
-          <button
-            onClick={handleShareLink}
-            className="w-full bg-black text-white py-4 rounded-xl font-semibold text-lg hover:bg-gray-800 transition-colors flex items-center justify-center"
-          >
-            <ShareIcon size={20} weight="fill" className="mr-2" />
-            Share link
-          </button>
         </div>
       </div>
 

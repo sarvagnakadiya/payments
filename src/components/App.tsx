@@ -10,7 +10,7 @@ import {
   useSwitchChain,
 } from "wagmi";
 import { useWallet as useSolanaWallet } from "@solana/wallet-adapter-react";
-import { checkTokenApprovalNeeded } from "~/lib/tokenUtils";
+import { checkTokenApprovalNeeded, getTokenBalance } from "~/lib/tokenUtils";
 import {
   getTokenInfo,
   getGatewayAddress,
@@ -185,7 +185,6 @@ export default function App(
   const publicClient = usePublicClient();
   const { switchChainAsync } = useSwitchChain();
   const {
-    sendTransaction,
     sendTransactionAsync,
     data: transactionHash,
     error: transactionError,
@@ -193,10 +192,7 @@ export default function App(
     isPending: isTransactionPending,
   } = useSendTransaction();
 
-  const {
-    isLoading: isTransactionConfirming,
-    isSuccess: isTransactionConfirmed,
-  } = useWaitForTransactionReceipt({
+  const { isSuccess: isTransactionConfirmed } = useWaitForTransactionReceipt({
     hash: transactionHash,
   });
 
@@ -280,7 +276,52 @@ export default function App(
     }
   }, [isTransactionError, transactionError, currentPayingRequest, paymentStep]);
 
-  // Auto-add mini app if not added (no delay)
+  // Handle transaction confirmation for fund request payments
+  useEffect(() => {
+    if (isTransactionConfirmed && transactionHash && currentPayingRequest) {
+      // Check if this transaction has already been processed
+      if (processedHashesRef.current.has(transactionHash)) {
+        return;
+      }
+
+      // Mark this transaction as processed
+      processedHashesRef.current.add(transactionHash);
+      console.log("Payment transaction confirmed:", transactionHash);
+      console.log(
+        "Updating fund request status to ACCEPTED for request:",
+        currentPayingRequest.id
+      );
+
+      // Update the fund request status to ACCEPTED
+      updateRequestStatus(currentPayingRequest.id, "ACCEPTED")
+        .then((success) => {
+          if (success) {
+            console.log("Successfully updated fund request status to ACCEPTED");
+          } else {
+            console.error("Failed to update fund request status");
+          }
+        })
+        .catch((error) => {
+          console.error("Error updating fund request status:", error);
+        })
+        .finally(() => {
+          // Clean up payment state
+          setCurrentPayingRequest(null);
+          setPaymentStep(null);
+          setPayingRequestId(null);
+
+          // Reset transaction processing state
+          lastProcessedHashRef.current = transactionHash;
+        });
+    }
+  }, [
+    isTransactionConfirmed,
+    transactionHash,
+    currentPayingRequest,
+    updateRequestStatus,
+  ]);
+
+  // Auto-add mini app if not added
   useEffect(() => {
     if (context && !added) {
       actions
@@ -321,20 +362,24 @@ export default function App(
     const shouldPay = params.get("pay");
     if (shouldPay === "1") {
       const amt = params.get("amount") || "0";
-      const tok = (params.get("token") || "USDC").toUpperCase();
+      // Token is no longer taken from deep link; settle in preferred token
       const fidStr = params.get("fid");
       const username = params.get("username") || "";
-      const name = params.get("name") || username;
-      const address = params.get("address") || "";
-      const avatar = params.get("avatar") || "";
+      const name = username; // Keep only username; name/address/avatar removed
 
       setAmount(amt);
-      setSelectedToken(tok);
+      // Do not override selected token from deep links anymore
 
       if (fidStr) {
         const fid = Number(fidStr);
         if (!Number.isNaN(fid)) {
-          setDeepLinkRecipient({ fid, username, name, address, avatar });
+          setDeepLinkRecipient({
+            fid,
+            username,
+            name,
+            address: "",
+            avatar: "",
+          });
         }
       }
 
@@ -562,6 +607,8 @@ export default function App(
       return;
     }
 
+    // Check if the user has enough balance
+
     setPayingRequestId(request.id);
     setCurrentPayingRequest(request);
 
@@ -603,8 +650,43 @@ export default function App(
 
       // Check if this is a direct transfer
       if (data.isDirectTransfer) {
-        console.log("=== DIRECT TRANSFER - SKIPPING APPROVAL ===");
-        console.log("Same chain/token detected, executing direct transfer");
+        console.log("=== DIRECT TRANSFER - CHECKING BALANCE ===");
+        console.log(
+          "Same chain/token detected, checking balance before transfer"
+        );
+
+        const tokenSymbol = request.overrideToken || "USDC";
+        const tokenInfo = getTokenInfo(chainId!, tokenSymbol);
+
+        if (!tokenInfo) {
+          throw new Error(`Token ${tokenSymbol} not found on chain ${chainId}`);
+        }
+
+        // Check balance for direct transfers
+        const requiredAmount = BigInt(
+          Math.floor(Number(request.amount) * Math.pow(10, tokenInfo.decimals))
+        );
+
+        const tokenBalance = await getTokenBalance(
+          publicClient!,
+          chainId!,
+          tokenSymbol,
+          evmAddress!
+        );
+
+        if (tokenBalance < requiredAmount) {
+          const balanceFormatted = (
+            Number(tokenBalance) / Math.pow(10, tokenInfo.decimals)
+          ).toFixed(4);
+          const requiredFormatted = (
+            Number(requiredAmount) / Math.pow(10, tokenInfo.decimals)
+          ).toFixed(4);
+          throw new Error(
+            `Insufficient ${tokenSymbol} balance. Required: ${requiredFormatted}, Available: ${balanceFormatted}`
+          );
+        }
+
+        console.log("Balance check passed, executing direct transfer");
 
         // For direct transfers, skip approval and execute immediately
         setPaymentStep("payment");
@@ -637,14 +719,52 @@ export default function App(
         Math.floor(Number(quote.depositAmount) * Math.pow(10, tokenDecimals))
       );
 
-      // 4) Execute approval (always approve exact required amount)
-      setPaymentStep("approval");
-      await executeApprovalForRequest(request, requiredAmount, {
-        chainId: targetChainId,
-        tokenSymbol: String(quote.tokenSymbol || "USDC").toUpperCase(),
-      });
+      const tokenSymbol = String(quote.tokenSymbol || "USDC").toUpperCase();
 
-      // 5) Execute payment with quoted params
+      // 4) Check token balance first
+      console.log("Checking token balance...");
+      const tokenBalance = await getTokenBalance(
+        publicClient!,
+        targetChainId,
+        tokenSymbol,
+        evmAddress!
+      );
+
+      if (tokenBalance < requiredAmount) {
+        const balanceFormatted = (
+          Number(tokenBalance) / Math.pow(10, tokenDecimals)
+        ).toFixed(4);
+        const requiredFormatted = (
+          Number(requiredAmount) / Math.pow(10, tokenDecimals)
+        ).toFixed(4);
+        throw new Error(
+          `Insufficient ${tokenSymbol} balance. Required: ${requiredFormatted}, Available: ${balanceFormatted}`
+        );
+      }
+
+      // 5) Check if approval is needed
+      console.log("Checking if approval is needed...");
+      const approvalCheck = await checkTokenApprovalNeeded(
+        publicClient!,
+        targetChainId,
+        tokenSymbol,
+        evmAddress!,
+        quote.depositAmount
+      );
+
+      // 6) Execute approval only if needed
+      if (approvalCheck.needsApproval) {
+        console.log("Approval needed, executing approval transaction...");
+        setPaymentStep("approval");
+        await executeApprovalForRequest(request, requiredAmount, {
+          chainId: targetChainId,
+          tokenSymbol: tokenSymbol,
+        });
+      } else {
+        console.log("Approval not needed, skipping approval step...");
+      }
+
+      // 7) Execute payment with quoted params
       setPaymentStep("payment");
       await executePaymentTransaction(request, {
         chainId: targetChainId,
@@ -1117,6 +1237,8 @@ export default function App(
         currentUserFid={
           context?.user?.fid ? String(context.user.fid) : undefined
         }
+        currentUserUsername={context?.user?.username}
+        currentUserPfpUrl={context?.user?.pfpUrl}
       />
 
       <WalletConfigurePopup

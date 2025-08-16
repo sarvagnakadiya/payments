@@ -176,6 +176,39 @@ export async function getTokenAllowance(
 }
 
 /**
+ * Get token balance for a user address
+ */
+export async function getTokenBalance(
+  publicClient: PublicClient,
+  chainId: number,
+  tokenSymbol: string,
+  userAddress: string
+): Promise<bigint> {
+  const tokenInfo = getTokenInfo(chainId, tokenSymbol);
+  if (!tokenInfo) {
+    throw new Error(`Token ${tokenSymbol} not found on chain ${chainId}`);
+  }
+
+  const balance = await publicClient.readContract({
+    address: tokenInfo.address as `0x${string}`,
+    abi: [
+      {
+        inputs: [{ name: "account", type: "address" }],
+        name: "balanceOf", 
+        outputs: [{ name: "", type: "uint256" }],
+        stateMutability: "view",
+        type: "function",
+      },
+    ],
+    functionName: "balanceOf",
+    args: [userAddress as `0x${string}`],
+  });
+
+  return balance as bigint;
+}
+
+
+/**
  * Check if approval is needed for a token transaction
  */
 export async function checkTokenApprovalNeeded(

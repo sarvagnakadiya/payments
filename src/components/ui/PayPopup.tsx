@@ -25,9 +25,13 @@ import {
   getTokensForChain,
   getTokenInfo,
   getGatewayAddress,
+  getTokenImageSrc,
   type TokenInfo,
 } from "../../lib/tokens";
-import { checkTokenApprovalNeeded } from "../../lib/tokenUtils";
+import {
+  checkTokenApprovalNeeded,
+  getTokenBalance,
+} from "../../lib/tokenUtils";
 
 interface PayPopupProps {
   isOpen: boolean;
@@ -65,7 +69,7 @@ export default function PayPopup({
   const [isCheckingApproval, setIsCheckingApproval] = useState(false);
   const [approvalAmount, setApprovalAmount] = useState<bigint>(0n);
   const [isApproving, setIsApproving] = useState(false);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [hasInsufficientBalance, setHasInsufficientBalance] = useState(false);
 
   const { users, isSearching, searchQuery, setSearchQuery, clearSearch } =
     useFarcasterUserSearch();
@@ -175,6 +179,45 @@ export default function PayPopup({
     setError(null);
 
     try {
+      const balance = await getTokenBalance(
+        publicClient,
+        chainId,
+        selectedToken,
+        address
+      );
+
+      console.log("=== TOKEN BALANCE ===");
+      console.log("balance:", balance.toString());
+      console.log("amount:", amount);
+
+      // Convert human-readable amount to smallest units using token decimals
+      const tokenInfo = getTokenInfo(chainId, selectedToken);
+      if (!tokenInfo) {
+        throw new Error(
+          `Token ${selectedToken} not supported on chain ${chainId}`
+        );
+      }
+
+      const parsedAmount = parseFloat(amount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        // No meaningful amount entered; reset insufficient balance state
+        setHasInsufficientBalance(false);
+      } else {
+        const requiredAmount = BigInt(
+          Math.floor(parsedAmount * Math.pow(10, tokenInfo.decimals))
+        );
+
+        if (balance < requiredAmount) {
+          console.log("=== INSUFFICIENT BALANCE DETECTED ===");
+          setHasInsufficientBalance(true);
+          setNeedsApproval(false);
+          return;
+        }
+
+        // Reset insufficient balance flag if balance is sufficient
+        setHasInsufficientBalance(false);
+      }
+
       const result = await checkTokenApprovalNeeded(
         publicClient,
         chainId,
@@ -201,70 +244,6 @@ export default function PayPopup({
     }
   }, [address, chainId, publicClient, selectedToken, amount]);
 
-  // Execute approval transaction
-  const executeApproval = React.useCallback(async () => {
-    if (!address || !chainId || !publicClient) {
-      setApprovalError("Missing required data for approval");
-      return;
-    }
-
-    setIsApproving(true);
-    setApprovalError(null);
-
-    try {
-      const tokenInfo = getTokenInfo(chainId, selectedToken);
-      if (!tokenInfo) {
-        throw new Error(`Token ${selectedToken} not found on chain ${chainId}`);
-      }
-
-      const gatewayAddress = getGatewayAddress(chainId);
-      if (gatewayAddress === "Native Integration") {
-        throw new Error("No approval needed for native integration");
-      }
-
-      // Create approval transaction data
-      const approvalData = encodeFunctionData({
-        abi: [
-          {
-            inputs: [
-              { name: "spender", type: "address" },
-              { name: "amount", type: "uint256" },
-            ],
-            name: "approve",
-            outputs: [{ name: "", type: "bool" }],
-            stateMutability: "nonpayable",
-            type: "function",
-          },
-        ],
-        functionName: "approve",
-        args: [gatewayAddress as `0x${string}`, approvalAmount],
-      });
-
-      console.log("=== EXECUTING APPROVAL ===");
-      console.log("Token:", tokenInfo.address);
-      console.log("Gateway:", gatewayAddress);
-      console.log("Amount:", approvalAmount.toString());
-
-      sendTransaction({
-        to: tokenInfo.address as `0x${string}`,
-        data: approvalData,
-      });
-    } catch (err) {
-      console.error("=== APPROVAL FAILED ===");
-      console.error("Error details:", err);
-      setApprovalError(err instanceof Error ? err.message : "Approval failed");
-    } finally {
-      setIsApproving(false);
-    }
-  }, [
-    address,
-    chainId,
-    publicClient,
-    selectedToken,
-    approvalAmount,
-    sendTransaction,
-  ]);
-
   // Reset approval state
   const resetApproval = React.useCallback(() => {
     setNeedsApproval(false);
@@ -272,7 +251,6 @@ export default function PayPopup({
     setApprovalAmount(0n);
     setError(null);
     setIsApproving(false);
-    setApprovalError(null);
     setIsBridgeStep(false);
     processedTransactions.current.clear();
   }, []);
@@ -298,6 +276,7 @@ export default function PayPopup({
       // Reset approval state if no valid amount
       setNeedsApproval(false);
       setApprovalAmount(0n);
+      setHasInsufficientBalance(false);
     }
   }, [checkApproval, amount, selectedToken, address, chainId]);
 
@@ -325,10 +304,6 @@ export default function PayPopup({
         transactionError
       );
       setIsApproving(false);
-      setApprovalError(
-        transactionError?.message ||
-          "Approval transaction was cancelled or failed"
-      );
     }
   }, [isTransactionError, transactionError, isApproving]);
 
@@ -346,22 +321,6 @@ export default function PayPopup({
       checkApproval();
     }
   }, [isTransactionConfirmed, isApproving, checkApproval, transactionHash]);
-
-  const handleApproval = async () => {
-    console.log("=== HANDLE APPROVAL CALLED ===");
-    setError(null);
-
-    try {
-      console.log("=== EXECUTING APPROVAL ===");
-      await executeApproval();
-      console.log("=== APPROVAL EXECUTION COMPLETED ===");
-    } catch (err) {
-      console.error("=== APPROVAL FAILED ===");
-      console.error("Error details:", err);
-      setError(err instanceof Error ? err.message : "Approval failed");
-      setIsApprovalStep(false);
-    }
-  };
 
   const executeBridgeTransaction = React.useCallback(async () => {
     console.log("=== EXECUTE BRIDGE TRANSACTION CALLED ===");
@@ -874,12 +833,23 @@ export default function PayPopup({
               onClick={() => setShowTokenDropdown(!showTokenDropdown)}
             >
               <div className="flex items-center">
-                <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                  <span className="text-white text-xs font-bold">
-                    {tokenOptions.find((t) => t.symbol === selectedToken)
-                      ?.icon || "$"}
-                  </span>
-                </div>
+                {(() => {
+                  const imgSrc = getTokenImageSrc(selectedToken);
+                  return imgSrc ? (
+                    <img
+                      src={imgSrc}
+                      alt={selectedToken}
+                      className="w-6 h-6 rounded-full object-contain mr-3"
+                    />
+                  ) : (
+                    <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
+                      <span className="text-white text-xs font-bold">
+                        {tokenOptions.find((t) => t.symbol === selectedToken)
+                          ?.icon || "$"}
+                      </span>
+                    </div>
+                  );
+                })()}
                 <span className="text-black font-medium">{selectedToken}</span>
               </div>
               {showTokenDropdown ? (
@@ -910,11 +880,22 @@ export default function PayPopup({
                       }}
                       className="w-full p-3 text-left hover:bg-gray-50 flex items-center"
                     >
-                      <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                        <span className="text-white text-xs font-bold">
-                          {token.icon}
-                        </span>
-                      </div>
+                      {(() => {
+                        const imgSrc = getTokenImageSrc(token.symbol);
+                        return imgSrc ? (
+                          <img
+                            src={imgSrc}
+                            alt={token.symbol}
+                            className="w-6 h-6 rounded-full object-contain mr-3"
+                          />
+                        ) : (
+                          <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center mr-3">
+                            <span className="text-white text-xs font-bold">
+                              {token.icon}
+                            </span>
+                          </div>
+                        );
+                      })()}
                       <div>
                         <div className="text-sm font-medium text-black">
                           {token.symbol}
@@ -942,7 +923,8 @@ export default function PayPopup({
               !selectedRecipient ||
               isProcessing ||
               isApproving ||
-              parseFloat(amount) === 0
+              parseFloat(amount) === 0 ||
+              hasInsufficientBalance
                 ? "bg-orange-200 text-orange-400 cursor-not-allowed"
                 : "bg-orange-500 text-white hover:bg-orange-600"
             }`}
@@ -952,11 +934,14 @@ export default function PayPopup({
               !selectedRecipient ||
               isProcessing ||
               isApproving ||
-              parseFloat(amount) === 0
+              parseFloat(amount) === 0 ||
+              hasInsufficientBalance
             }
           >
             {isCheckingApproval
               ? "Checking..."
+              : hasInsufficientBalance
+              ? "Not Enough Balance"
               : isProcessing || isApproving
               ? isApprovalStep
                 ? "Approving..."

@@ -19,6 +19,8 @@ interface RequestPopupProps {
   onAmountChange: (amount: string) => void;
   onTokenChange: (token: string) => void;
   currentUserFid?: string | number;
+  currentUserUsername?: string;
+  currentUserPfpUrl?: string;
 }
 
 export default function RequestPopup({
@@ -29,6 +31,8 @@ export default function RequestPopup({
   onAmountChange,
   onTokenChange,
   currentUserFid,
+  currentUserUsername,
+  currentUserPfpUrl,
 }: RequestPopupProps) {
   const [showRecipientDropdown, setShowRecipientDropdown] = useState(false);
   const [showTokenDropdown, setShowTokenDropdown] = useState(false);
@@ -342,8 +346,10 @@ export default function RequestPopup({
         isOpen={showQRCode}
         onClose={() => setShowQRCode(false)}
         amount={amount}
-        selectedToken={selectedToken}
-        username={selectedRecipient?.username || ""}
+        username={currentUserUsername || ""}
+        requesterFid={currentUserFid}
+        requesterUsername={currentUserUsername}
+        requesterPfpUrl={currentUserPfpUrl}
         recipient={{
           fid: selectedRecipient?.fid,
           name: selectedRecipient?.name,
